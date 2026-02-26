@@ -1,4 +1,6 @@
-<h1 align="center">Copilot for Obsidian</h1>
+<h1 align="center">Agent Copilot for Obsidian</h1>
+
+> **Fork Notice**: This project is a personal fork of [obsidian-copilot](https://github.com/logancyang/obsidian-copilot) by [Logan Yang](https://github.com/logancyang). Many thanks to the original author and all contributors for their excellent work. This fork removes subscription gating and adds agent-first enhancements.
 
 <h2 align="center">
 The Ultimate AI Assistant for Your Second Brain
@@ -22,9 +24,14 @@ The Ultimate AI Assistant for Your Second Brain
   </a>
 </p>
 
+## Changelog
+
+- **2026-02-26**: Added MCP (Model Context Protocol) support — connect any local or remote MCP server as agent tools via JSON config
+- **2026-02-24**: Unified Chat / QA / Agent into a single Agent mode
+
 ## The What
 
-_Copilot for Obsidian_ is your in‑vault AI assistant with chat-based vault search, web and YouTube support, powerful context processing, and ever-expanding agentic capabilities within Obsidian's highly customizable workspace - all while keeping your data under **your** control.
+_Copilot for Obsidian_ is your in‑vault AI assistant with chat-based vault search, powerful context processing, MCP tool integration, and ever-expanding agentic capabilities within Obsidian's highly customizable workspace - all while keeping your data under **your** control.
 
 ## The Why
 
@@ -38,11 +45,12 @@ This is the future we believe in. If you share this vision, please support this 
 
 - **🔒 Your data is 100% yours**: Local search and storage, and full control of your data if you use self-hosted models.
 - **🧠 Bring Your Own Model**: Tap any OpenAI-compatible or local model to uncover insights, spark connections, and create content.
-- **🖼️ Multimedia understanding**: Drop in webpages, YouTube videos, images, PDFs, EPUBS, or real-time web search for quick insights.
+- **🖼️ Multimedia understanding**: Drop in webpages, images, PDFs, or EPUBs for quick insights.
+- **🔌 MCP Tool Integration**: Connect any local or remote MCP server as agent tools via a simple JSON config — web search, code execution, APIs, and more.
 - **🔍 Smart Vault Search**: Search your vault with chat, no setup required. Embeddings are optional. Copilot delivers results right away.
 - **✍️ Composer and Quick Commands**: Interact with your writing with chat, apply changes with 1 click.
 - **🗂️ Project Mode**: Create AI-ready context based on folders and tags. Think NotebookLM but inside your vault!
-- **🤖 Agent Mode (Plus)**: Unlock an autonomous agent with built-in tool calling. No commands needed. Copilot automatically triggers vault, web searches or any other relevant tool when relevant.
+- **🤖 Agent Mode**: Unlock an autonomous agent with built-in tool calling and MCP server support. No commands needed. Copilot automatically triggers vault search, MCP tools, or any other relevant tool when relevant.
 
 <p align="center">
   <em>Copilot's Agent can call the proper tools on its own upon your request.</em>

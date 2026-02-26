@@ -57,7 +57,10 @@ export default class EmbeddingManager {
     [EmbeddingModelProviders.LM_STUDIO]: () => "default-key",
     [EmbeddingModelProviders.OPENAI_FORMAT]: () => "default-key",
     [EmbeddingModelProviders.SILICONFLOW]: () => getSettings().siliconflowApiKey,
-    [EmbeddingModelProviders.OPENROUTERAI]: () => getSettings().openRouterAiApiKey,
+    [EmbeddingModelProviders.OPENROUTERAI]: () =>
+      getSettings().openRouterAiApiKey ||
+      getSettings().activeModels.find((m) => m.provider === "openrouterai" && m.apiKey)?.apiKey ||
+      "",
   };
 
   private constructor() {
@@ -103,8 +106,16 @@ export default class EmbeddingManager {
           return;
         }
         const constructor = this.getProviderConstructor(model);
-        const apiKey =
-          model.apiKey || this.providerApiKeyMap[model.provider as EmbeddingModelProviders]();
+        // 1) model-specific key, 2) provider global key, 3) any chat model with same provider
+        const providerGlobalKey =
+          this.providerApiKeyMap[model.provider as EmbeddingModelProviders]?.() ?? "";
+        const chatModelKey =
+          !model.apiKey && !providerGlobalKey
+            ? (getSettings().activeModels.find(
+                (m) => m.provider === model.provider && m.apiKey
+              )?.apiKey ?? "")
+            : "";
+        const apiKey = model.apiKey || providerGlobalKey || chatModelKey;
 
         const modelKey = getModelKeyFromModel(model);
         modelMap[modelKey] = {
@@ -147,21 +158,8 @@ export default class EmbeddingManager {
 
     const customModel = this.getCustomModel(embeddingModelKey);
 
-    // Check if model is plus-exclusive but user is not a plus user
-    if (customModel.plusExclusive && !getSettings().isPlusUser) {
-      new Notice("Plus-only model, please consider upgrading to Plus to access it.");
-      throw new CustomError("Plus-only model selected but user is not on Plus plan");
-    }
-
-    // Check if model is believer-exclusive but user is not on believer plan
-    if (customModel.believerExclusive) {
-      const brevilabsClient = BrevilabsClient.getInstance();
-      const result = await brevilabsClient.validateLicenseKey();
-      if (!result.plan || result.plan.toLowerCase() !== "believer") {
-        new Notice("Believer-only model, please consider upgrading to Believer to access it.");
-        throw new CustomError("Believer-only model selected but user is not on Believer plan");
-      }
-    }
+    // Note: Plus license validation removed - all models are now available without license validation
+    // The plusExclusive and believerExclusive properties are kept for backwards compatibility
 
     const selectedModel = EmbeddingManager.modelMap[embeddingModelKey];
     if (!selectedModel.hasApiKey) {
@@ -295,7 +293,12 @@ export default class EmbeddingManager {
       },
       [EmbeddingModelProviders.OPENROUTERAI]: {
         modelName,
-        apiKey: await getDecryptedKey(customModel.apiKey || settings.openRouterAiApiKey),
+        apiKey: await getDecryptedKey(
+          customModel.apiKey ||
+            settings.openRouterAiApiKey ||
+            settings.activeModels.find((m) => m.provider === "openrouterai" && m.apiKey)?.apiKey ||
+            ""
+        ),
         batchSize: getSettings().embeddingBatchSize,
         configuration: {
           baseURL: customModel.baseUrl || "https://openrouter.ai/api/v1",

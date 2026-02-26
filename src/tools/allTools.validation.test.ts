@@ -22,7 +22,11 @@ function hasWeakTyping(schema: z.ZodType): boolean {
   }
 
   if (schema instanceof z.ZodArray) {
-    return hasWeakTyping(schema._def.type);
+    // Zod v4 uses _def.element, Zod v3 uses _def.innerType
+    const element = (schema as any)._def?.element || (schema as any)._def?.innerType || (schema as any)._def?.type;
+    if (element) {
+      return hasWeakTyping(element as z.ZodType);
+    }
   }
 
   if (
@@ -30,7 +34,11 @@ function hasWeakTyping(schema: z.ZodType): boolean {
     schema instanceof z.ZodNullable ||
     schema instanceof z.ZodDefault
   ) {
-    return hasWeakTyping(schema._def.innerType);
+    // Zod v4 uses _def.innerType, Zod v3 uses _def.type
+    const innerType = (schema as any)._def?.innerType || (schema as any)._def?.type;
+    if (innerType) {
+      return hasWeakTyping(innerType as z.ZodType);
+    }
   }
 
   return false;
@@ -185,9 +193,10 @@ describe("All Tools Validation", () => {
       });
 
       // Check that descriptions are accessible
+      // Note: In Zod v4, description is accessed via .description property, not ._def.description
       const shape = wellDocumentedSchema.shape;
-      expect((shape.query as any)._def.description).toBe("The search query to execute");
-      expect((shape.limit as any)._def.description).toBe("Maximum number of results to return");
+      expect((shape.query as any).description).toBe("The search query to execute");
+      expect((shape.limit as any).description).toBe("Maximum number of results to return");
     });
   });
 

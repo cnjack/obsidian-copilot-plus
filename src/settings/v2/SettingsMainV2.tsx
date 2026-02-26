@@ -6,7 +6,7 @@ import { useLatestVersion } from "@/hooks/useLatestVersion";
 import CopilotPlugin from "@/main";
 import { resetSettings } from "@/settings/model";
 import { CommandSettings } from "@/settings/v2/components/CommandSettings";
-import { Cog, Command, Cpu, Database, Sparkles, Wrench } from "lucide-react";
+import { Cog, Command, Cpu, Database, Bot, Wrench } from "lucide-react";
 import React from "react";
 import { AdvancedSettings } from "./components/AdvancedSettings";
 import { BasicSettings } from "./components/BasicSettings";
@@ -14,34 +14,44 @@ import { CopilotPlusSettings } from "./components/CopilotPlusSettings";
 import { ModelSettings } from "./components/ModelSettings";
 import { QASettings } from "./components/QASettings";
 
-const TAB_IDS = ["basic", "model", "QA", "command", "plus", "advanced"] as const;
+const TAB_IDS = ["general", "model", "retrieval", "command", "tools", "advanced"] as const;
 type TabId = (typeof TAB_IDS)[number];
 
 // tab icons
 const icons: Record<TabId, JSX.Element> = {
-  basic: <Cog className="tw-size-5" />,
+  general: <Cog className="tw-size-5" />,
   model: <Cpu className="tw-size-5" />,
-  QA: <Database className="tw-size-5" />,
+  retrieval: <Database className="tw-size-5" />,
   command: <Command className="tw-size-5" />,
-  plus: <Sparkles className="tw-size-5" />,
+  tools: <Bot className="tw-size-5" />,
   advanced: <Wrench className="tw-size-5" />,
 };
 
 // tab components
 const components: Record<TabId, React.FC> = {
-  basic: () => <BasicSettings />,
+  general: () => <BasicSettings />,
   model: () => <ModelSettings />,
-  QA: () => <QASettings />,
+  retrieval: () => <QASettings />,
   command: () => <CommandSettings />,
-  plus: () => <CopilotPlusSettings />,
+  tools: () => <CopilotPlusSettings />,
   advanced: () => <AdvancedSettings />,
+};
+
+// tab labels
+const tabLabels: Record<TabId, string> = {
+  general: "General",
+  model: "Model",
+  retrieval: "Retrieval",
+  command: "Command",
+  tools: "Tools",
+  advanced: "Advanced",
 };
 
 // tabs
 const tabs: TabItemType[] = TAB_IDS.map((id) => ({
   id,
   icon: icons[id],
-  label: id.charAt(0).toUpperCase() + id.slice(1),
+  label: tabLabels[id],
 }));
 
 const SettingsContent: React.FC = () => {

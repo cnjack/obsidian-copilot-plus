@@ -4,7 +4,7 @@ import { replaceInFileTool, writeToFileTool } from "./ComposerTools";
 import { createGetFileTreeTool } from "./FileTreeTools";
 import { updateMemoryTool } from "./memoryTools";
 import { readNoteTool } from "./NoteTools";
-import { localSearchTool, webSearchTool } from "./SearchTools";
+import { localSearchTool, vaultSearchTool, webFetchTool } from "./SearchTools";
 import { createGetTagListTool } from "./TagTools";
 import {
   convertTimeBetweenTimezonesTool,
@@ -13,7 +13,6 @@ import {
   getTimeRangeMsTool,
 } from "./TimeTools";
 import { ToolDefinition, ToolRegistry } from "./ToolRegistry";
-import { youtubeTranscriptionTool } from "./YoutubeTools";
 
 /**
  * Define all built-in tools with their metadata
@@ -67,21 +66,44 @@ For exhaustive "find all" searches:
     },
   },
   {
-    tool: webSearchTool,
+    tool: vaultSearchTool,
     metadata: {
-      id: "webSearch",
-      displayName: "Web Search",
+      id: "vaultSearch",
+      displayName: "Vault Search (ContextItem)",
       description:
-        "Search the INTERNET (NOT vault notes) when user explicitly asks for web/online information",
+        "Search vault notes and return results as structured ContextItem objects. Simpler interface than localSearch.",
       category: "search",
-      copilotCommands: ["@websearch", "@web"],
-      customPromptInstructions: `For webSearch:
-- ONLY use when the user's query contains explicit web-search intent like:
-  * "web search", "internet search", "online search"
-  * "Google", "search online", "look up online", "search the web"
-- Always provide an empty chatHistory array
+      requiresVault: true,
+      customPromptInstructions: `For vaultSearch (simplified vault search with ContextItem output):
+- Use this when you want search results as structured ContextItem objects
+- Provide "query" with your search terms
+- Optionally provide "tags" array with # prefixed tags (e.g., ["#project", "#todo"])
+- Optionally provide "timeRange" from getTimeRangeMs result
+- Set "returnAll: true" for exhaustive searches ("find all", "list every")
 
-Example: "search the web for python tutorials" → query: "python tutorials", chatHistory: []`,
+Examples:
+- Basic search: query: "project planning notes"
+- With tags: query: "meeting notes", tags: ["#meeting", "#work"]
+- With time range: query: "daily reflections", timeRange: {startTime: ..., endTime: ...}
+- Find all: query: "book notes", tags: ["#books"], returnAll: true`,
+    },
+  },
+  {
+    tool: webFetchTool,
+    metadata: {
+      id: "webFetch",
+      displayName: "Web Fetch",
+      description:
+        "Fetch and parse the main content from a specific URL. Use when the user provides a direct URL to read.",
+      category: "search",
+      customPromptInstructions: `For webFetch:
+- Use when the user provides a specific URL to read
+- The tool will fetch the page and extract the main content, stripping HTML boilerplate
+- Returns the cleaned text content as a UrlRefContextItem
+
+Examples:
+- "Summarize this article: https://example.com/article" → url: "https://example.com/article"
+- "What does this page say? https://example.com" → url: "https://example.com"`,
     },
   },
 
@@ -179,7 +201,6 @@ Examples:
       category: "file",
       requiresVault: true,
       timeoutMs: 0, // No timeout - waits for user preview decision
-      copilotCommands: ["@composer"],
       customPromptInstructions: `For writeToFile:
 - NEVER display the file content directly in your response
 - Always pass the complete file content to the tool
@@ -215,21 +236,6 @@ diff: "------- SEARCH\\n## Attendees\\n- John Smith\\n- Jane Doe\\n=======\\n## 
     },
   },
 
-  // Media tools
-  {
-    tool: youtubeTranscriptionTool,
-    metadata: {
-      id: "youtubeTranscription",
-      displayName: "YouTube Transcription",
-      description: "Get transcripts from YouTube videos",
-      category: "media",
-      isPlusOnly: true,
-      requiresUserMessageContent: true,
-      customPromptInstructions: `For youtubeTranscription:
-- Use when user provides YouTube URLs
-- No parameters needed - the tool will process URLs from the conversation`,
-    },
-  },
 ];
 
 /**
@@ -338,8 +344,8 @@ export function initializeBuiltinTools(vault?: Vault): void {
     hasFileTree !== shouldHaveFileTree ||
     hasUpdateMemoryTool !== shouldHaveMemoryTool
   ) {
-    // Clear any existing tools
-    registry.clear();
+    // Clear built-in tools only, preserving MCP tools registered by MCPManager
+    registry.clearBuiltins();
 
     // Register all built-in tools
     registry.registerAll(BUILTIN_TOOLS);

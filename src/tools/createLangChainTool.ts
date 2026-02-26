@@ -76,11 +76,16 @@ function getZodDescription(schema: z.ZodType): string {
     schema instanceof z.ZodNullable ||
     schema instanceof z.ZodDefault
   ) {
-    return getZodDescription(schema._def.innerType);
+    // Use the unwrapped type - compatible with both zod 3.x and 4.x
+    const innerType = (schema as any)._def?.innerType || (schema as any)._def?.type;
+    if (innerType) {
+      return getZodDescription(innerType);
+    }
   }
 
-  // @ts-ignore - accessing private _def property
-  return schema._def.description || "";
+  // Get description from def
+  const def = (schema as any)._def;
+  return def?.description || "";
 }
 
 /**

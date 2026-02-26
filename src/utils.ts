@@ -397,13 +397,13 @@ export function isAllowedFileForNoteContext(file: TFile | null): boolean {
 }
 
 /**
- * Checks if a chain type is a Plus mode chain (Copilot Plus or Project Chain).
- * Plus mode chains have access to premium features like PDF processing and URL processing.
+ * Checks if a chain type supports agent features (URL processing, PDF, etc.).
+ * Per the unified agent mode redesign, all chain types now support agent features.
  * @param chainType The chain type to check
- * @returns true if this is a Plus mode chain, false otherwise
+ * @returns always true - all chains are now agent-capable
  */
-export function isPlusChain(chainType: ChainType): boolean {
-  return chainType === ChainType.COPILOT_PLUS_CHAIN || chainType === ChainType.PROJECT_CHAIN;
+export function isPlusChain(_chainType: ChainType): boolean {
+  return true;
 }
 
 /**

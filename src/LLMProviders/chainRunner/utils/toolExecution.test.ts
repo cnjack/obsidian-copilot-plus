@@ -69,39 +69,10 @@ describe("toolExecution", () => {
       expect(mockCheckIsPlusUser).not.toHaveBeenCalled();
     });
 
-    it("should block plus-only tools for non-plus users", async () => {
-      const plusTool = createLangChainTool({
-        name: "plusTool",
-        description: "Plus-only tool",
-        schema: z.object({}),
-        func: async () => "Should not execute",
-      });
-
-      // Register tool with isPlusOnly metadata
-      ToolRegistry.getInstance().register({
-        tool: plusTool,
-        metadata: {
-          id: "plusTool",
-          displayName: "Plus Tool",
-          description: "Plus-only tool",
-          category: "custom",
-          isPlusOnly: true,
-        },
-      });
-
-      mockCheckIsPlusUser.mockResolvedValueOnce(false);
-
-      const result = await executeSequentialToolCall({ name: "plusTool", args: {} }, [plusTool]);
-
-      expect(result).toEqual({
-        toolName: "plusTool",
-        result: "Error: plusTool requires a Copilot Plus subscription",
-        success: false,
-      });
-      expect(mockCallTool).not.toHaveBeenCalled();
-    });
-
-    it("should allow plus-only tools for plus users", async () => {
+    it("should allow plus-only tools without license check (Plus gating removed)", async () => {
+      // Note: Plus license gating has been removed - all tools are now available
+      // regardless of license status. The isPlusOnly metadata property is kept
+      // for backwards compatibility but no longer affects execution.
       const plusTool = createLangChainTool({
         name: "plusTool",
         description: "Plus-only tool",
@@ -121,7 +92,6 @@ describe("toolExecution", () => {
         },
       });
 
-      mockCheckIsPlusUser.mockResolvedValueOnce(true);
       mockCallTool.mockResolvedValueOnce("Plus tool executed");
 
       const result = await executeSequentialToolCall({ name: "plusTool", args: {} }, [plusTool]);
@@ -131,7 +101,8 @@ describe("toolExecution", () => {
         result: "Plus tool executed",
         success: true,
       });
-      expect(mockCheckIsPlusUser).toHaveBeenCalled();
+      // Plus check is no longer performed
+      expect(mockCheckIsPlusUser).not.toHaveBeenCalled();
       expect(mockCallTool).toHaveBeenCalled();
     });
 

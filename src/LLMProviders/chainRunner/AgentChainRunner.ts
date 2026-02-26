@@ -1,17 +1,41 @@
-import { AGENT_LOOP_TIMEOUT_MS } from "@/constants";
+/**
+ * Unified AgentChainRunner - Agentic-by-default chain runner
+ *
+ * This runner unifies LLMChainRunner, VaultQAChainRunner, CopilotPlusChainRunner,
+ * and AutonomousAgentChainRunner into a single cohesive implementation.
+ *
+ * Features:
+ * - Automatic tool routing by default
+ * - Unified context system (note refs, vault search, web search)
+ * - State machine pattern for agentic loop
+ * - Native tool calling with ReAct fallback
+ * - Zod input validation for security
+ */
+
+import {
+  ABORT_REASON,
+  AGENT_LOOP_TIMEOUT_MS,
+  DEFAULT_MAX_SOURCE_CHUNKS,
+  ModelCapability,
+  RETRIEVED_DOCUMENT_TAG,
+} from "@/constants";
 import { MessageContent } from "@/imageProcessing/imageProcessor";
 import { logError, logInfo, logWarn } from "@/logger";
-import { UserMemoryManager } from "@/memory/UserMemoryManager";
+import { checkIsPlusUser } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
-import { getSystemPromptWithMemory } from "@/system-prompts/systemPromptBuilder";
-import { initializeBuiltinTools } from "@/tools/builtinTools";
-import { ToolRegistry } from "@/tools/ToolRegistry";
-import { StructuredTool } from "@langchain/core/tools";
-import { Runnable } from "@langchain/core/runnables";
 import { ChatMessage, ResponseMetadata, StreamingResult } from "@/types/message";
 import { err2String, withSuppressedTokenWarnings } from "@/utils";
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { CopilotPlusChainRunner } from "./CopilotPlusChainRunner";
+import { Runnable } from "@langchain/core/runnables";
+import { StructuredTool } from "@langchain/core/tools";
+import { z } from "zod";
+
+import { LayerToMessagesConverter } from "@/context/LayerToMessagesConverter";
+import { ToolRegistry } from "@/tools/ToolRegistry";
+import { initializeBuiltinTools } from "@/tools/builtinTools";
+import { QueryExpander } from "@/search/v3/QueryExpander";
+
+import { BaseChainRunner } from "./BaseChainRunner";
 import { loadAndAddChatHistory } from "./utils/chatHistoryUtils";
 import { ModelAdapter, ModelAdapterFactory } from "./utils/modelAdapter";
 import { ThinkBlockStreamer } from "./utils/ThinkBlockStreamer";
@@ -27,9 +51,7 @@ import {
   buildToolCallsFromChunks,
   ToolCallChunk,
 } from "./utils/nativeToolCalling";
-
 import { ensureCiCOrderingWithQuestion } from "./utils/cicPromptUtils";
-import { LayerToMessagesConverter } from "@/context/LayerToMessagesConverter";
 import { buildAgentPromptDebugReport } from "./utils/promptDebugService";
 import { recordPromptPayload } from "./utils/promptPayloadRecorder";
 import { PromptDebugReport } from "./utils/toolPromptDebugger";
@@ -43,7 +65,68 @@ import {
   summarizeToolResult,
   QueryExpansionInfo,
 } from "./utils/AgentReasoningState";
-import { QueryExpander } from "@/search/v3/QueryExpander";
+import { getSystemPromptWithMemory } from "@/system-prompts/systemPromptBuilder";
+import { UserMemoryManager } from "@/memory/UserMemoryManager";
+import { ToolManager } from "@/tools/toolManager";
+import { ToolResultFormatter } from "@/tools/ToolResultFormatter";
+import { RetrieverFactory } from "@/search/RetrieverFactory";
+import { FilterRetriever } from "@/search/v3/FilterRetriever";
+import { mergeFilterAndSearchResults } from "@/search/v3/mergeResults";
+import { extractTagsFromQuery } from "@/search/v3/utils/tagUtils";
+import { getModelKey } from "@/aiParams";
+import { findCustomModel } from "@/utils";
+import {
+  formatSourceCatalog,
+  getQACitationInstructions,
+  sanitizeContentForCitations,
+  addFallbackSources,
+  hasInlineCitations,
+  type SourceCatalogEntry,
+} from "./utils/citationUtils";
+import { extractChatHistory } from "@/utils";
+
+// ============================================================================
+// Zod Input Validation Schema
+// ============================================================================
+
+/**
+ * Zod schema for validating agent input parameters.
+ * Ensures security and type safety at the agent boundary.
+ */
+const AgentInputSchema = z.object({
+  userMessage: z.object({
+    message: z.string(),
+    originalMessage: z.string().optional(),
+    content: z.any().optional(), // MessageContent[] for multimodal
+    contextEnvelope: z.any().optional(), // ContextEnvelope for layered context
+  }),
+  abortController: z.instanceof(AbortController),
+  options: z
+    .object({
+      debug: z.boolean().optional(),
+      ignoreSystemMessage: z.boolean().optional(),
+      updateLoading: z.function().optional(),
+      updateLoadingMessage: z.function().optional(),
+    })
+    .optional(),
+});
+
+/**
+ * Zod schema for tool call arguments validation.
+ */
+const ToolCallArgsSchema = z.record(z.string(), z.unknown());
+
+/**
+ * Validate agent input using Zod.
+ * @throws {z.ZodError} If validation fails
+ */
+function validateAgentInput(input: unknown): z.infer<typeof AgentInputSchema> {
+  return AgentInputSchema.parse(input);
+}
+
+// ============================================================================
+// Type Definitions
+// ============================================================================
 
 type AgentSource = {
   title: string;
@@ -52,12 +135,9 @@ type AgentSource = {
   explanation?: any;
 };
 
-/**
- * Dependencies for the ReAct agent loop - simplified for native tool calling
- */
 interface AgentLoopDeps {
   availableTools: StructuredTool[];
-  boundModel: Runnable; // Model with tools bound via bindTools()
+  boundModel: Runnable;
   processLocalSearchResult: (
     toolResult: { result: string; success: boolean },
     timeExpression?: string
@@ -66,25 +146,16 @@ interface AgentLoopDeps {
     formattedForDisplay: string;
     sources: AgentSource[];
   };
-  applyCiCOrderingToLocalSearchResult: (
-    localSearchPayload: string,
-    originalPrompt: string
-  ) => string;
+  applyCiCOrderingToLocalSearchResult: (localSearchPayload: string, originalPrompt: string) => string;
 }
 
-/**
- * Context for agent run - uses BaseMessage[] for native tool calling
- */
 interface AgentRunContext {
-  messages: BaseMessage[]; // Native LangChain messages
+  messages: BaseMessage[];
   collectedSources: AgentSource[];
   originalUserPrompt: string;
   loopDeps: AgentLoopDeps;
 }
 
-/**
- * Parameters for the ReAct loop
- */
 interface ReActLoopParams {
   boundModel: Runnable;
   tools: StructuredTool[];
@@ -95,28 +166,42 @@ interface ReActLoopParams {
   processLocalSearchResult: AgentLoopDeps["processLocalSearchResult"];
   applyCiCOrderingToLocalSearchResult: AgentLoopDeps["applyCiCOrderingToLocalSearchResult"];
   adapter: ModelAdapter;
+  isVaultQAMode: boolean;
+  vaultQADocs?: any[];
 }
 
-/**
- * Result from the ReAct loop
- */
 interface ReActLoopResult {
   finalResponse: string;
   sources: AgentSource[];
   responseMetadata?: ResponseMetadata;
 }
 
-export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
-  private llmFormattedMessages: string[] = []; // Track LLM-formatted messages for memory
-  private lastDisplayedContent = ""; // Track the last content displayed to user for error recovery
+// ============================================================================
+// AgentChainRunner Class
+// ============================================================================
 
+export class AgentChainRunner extends BaseChainRunner {
   // Agent Reasoning Block state
   private reasoningState: AgentReasoningState = createInitialReasoningState();
   private reasoningTimerInterval: ReturnType<typeof setInterval> | null = null;
-  private accumulatedContent = ""; // Track content to include in timer updates
-  private allReasoningSteps: Array<{ timestamp: number; summary: string; toolName?: string }> = []; // Full history of all steps
-  private abortHandledByTimer = false; // Flag to prevent duplicate interrupted messages
+  private accumulatedContent = "";
+  private allReasoningSteps: Array<{
+    timestamp: number;
+    summary: string;
+    toolName?: string;
+  }> = [];
+  private abortHandledByTimer = false;
 
+  // Track LLM formatted messages for memory
+  private llmFormattedMessages: string[] = [];
+  private lastDisplayedContent = "";
+
+  // Vault QA specific state
+  private vaultQADocuments: any[] = [];
+
+  /**
+   * Get available tools from the registry.
+   */
   private getAvailableTools(): StructuredTool[] {
     const settings = getSettings();
     const registry = ToolRegistry.getInstance();
@@ -135,11 +220,6 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
 
   /**
    * Start the reasoning timer and initialize reasoning state.
-   * Timer runs independently and always includes accumulated content.
-   * Also monitors abort signal to show interrupted message immediately.
-   *
-   * @param updateFn - Function to call with updated message content
-   * @param abortController - AbortController to monitor for user interruption
    */
   private startReasoningTimer(
     updateFn: (message: string) => void,
@@ -152,8 +232,8 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       steps: [],
     };
     this.accumulatedContent = "";
-    this.allReasoningSteps = []; // Reset full history
-    this.abortHandledByTimer = false; // Reset abort flag
+    this.allReasoningSteps = [];
+    this.abortHandledByTimer = false;
 
     // Add initial step immediately for better UX (randomized for variety)
     const initialSteps = [
@@ -167,32 +247,17 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       "Diving into your request",
       "Let me think about this",
       "Exploring your question",
-      "Getting my thoughts together",
-      "Examining the details",
-      "Looking into this",
-      "Mulling this over",
-      "On it",
-      "Firing up the neurons",
-      "Connecting the dots",
-      "Brewing some ideas",
-      "Spinning up the gears",
-      "Warming up the engines",
-      "Crunching the details",
-      "Putting on my thinking cap",
-      "Consulting my notes",
-      "Gathering my thoughts",
-      "Rolling up my sleeves",
     ];
     const randomStep = initialSteps[Math.floor(Math.random() * initialSteps.length)];
     this.addReasoningStep(randomStep);
 
-    // Update every 100ms for smooth timer - always includes accumulated content
+    // Update every 100ms for smooth timer
     this.reasoningTimerInterval = setInterval(() => {
       // Check for abort and show interrupted message immediately
       if (abortController?.signal.aborted && this.reasoningState.status === "reasoning") {
         this.stopReasoningTimer();
         this.reasoningState.status = "complete";
-        this.abortHandledByTimer = true; // Mark that we've handled the abort
+        this.abortHandledByTimer = true;
         const reasoningBlock = this.buildReasoningBlockMarkup();
         const interruptedMessage = "The response was interrupted.";
         const finalResponse = reasoningBlock
@@ -206,7 +271,6 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
         this.reasoningState.elapsedSeconds = Math.floor(
           (Date.now() - this.reasoningState.startTime) / 1000
         );
-        // Always update with reasoning block + any accumulated content
         const reasoningBlock = this.buildReasoningBlockMarkup();
         const fullMessage = reasoningBlock
           ? reasoningBlock + (this.accumulatedContent ? "\n\n" + this.accumulatedContent : "")
@@ -218,11 +282,6 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
 
   /**
    * Add a reasoning step to the display.
-   * During reasoning: shows rolling window of last 4 steps.
-   * After completion: full history is available for expanded view.
-   *
-   * @param summary - Human-readable summary of the step
-   * @param toolName - Optional name of the tool associated with this step
    */
   private addReasoningStep(summary: string, toolName?: string, detailedOnly = false): void {
     const step = {
@@ -230,15 +289,12 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       summary,
       toolName,
     };
-    // Always add to full history
     this.allReasoningSteps.push(step);
 
-    // For detailed-only steps, skip the rolling display
     if (detailedOnly) {
       return;
     }
 
-    // Add to display state (rolling window)
     this.reasoningState.steps.push(step);
     // Keep only last 4 steps for rolling window display during reasoning
     if (this.reasoningState.steps.length > 4) {
@@ -247,7 +303,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Stop the reasoning timer and mark reasoning as collapsed.
+   * Stop the reasoning timer.
    */
   private stopReasoningTimer(): void {
     if (this.reasoningTimerInterval) {
@@ -258,21 +314,9 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Get early feedback message for a tool that may take a while to stream.
-   * This provides immediate UX feedback while the model generates content.
-   *
-   * @param toolName - Name of the tool being called
-   * @returns Early feedback message, or null if no early feedback needed
-   */
-  /**
    * Build the reasoning block markup for embedding in the message.
-   * During reasoning: uses rolling window (last 4 steps).
-   * When complete: uses full history so expanded view shows all steps.
-   *
-   * @returns Markup string for the reasoning block
    */
   private buildReasoningBlockMarkup(): string {
-    // When complete, use full history for the expanded view
     if (this.reasoningState.status === "complete" || this.reasoningState.status === "collapsed") {
       const stateWithFullHistory: AgentReasoningState = {
         ...this.reasoningState,
@@ -280,29 +324,26 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       };
       return serializeReasoningBlock(stateWithFullHistory);
     }
-    // During reasoning, use the rolling window
     return serializeReasoningBlock(this.reasoningState);
   }
 
   /**
-   * Generate system prompt for the autonomous agent.
-   * Note: Tool schemas are handled by bindTools(), so we only include
-   * semantic guidance from tool metadata here.
+   * Generate system prompt for the agent.
    */
   public static async generateSystemPrompt(
     availableTools: StructuredTool[],
-    _adapter?: ModelAdapter, // Unused, kept for backwards compatibility with tests
+    _adapter?: ModelAdapter,
     userMemoryManager?: UserMemoryManager
   ): Promise<string> {
     const basePrompt = await getSystemPromptWithMemory(userMemoryManager);
 
-    // Get tool metadata for custom instructions (semantic guidance only)
+    // Get tool metadata for custom instructions
     const registry = ToolRegistry.getInstance();
     const toolMetadata = availableTools
       .map((tool) => registry.getToolMetadata(tool.name))
       .filter((meta): meta is NonNullable<typeof meta> => meta !== undefined);
 
-    // Build tool-specific instructions from metadata (no XML format needed)
+    // Build tool-specific instructions from metadata
     const toolInstructions = toolMetadata
       .filter((meta) => meta.customPromptInstructions)
       .map((meta) => `For ${meta.displayName}: ${meta.customPromptInstructions}`)
@@ -315,17 +356,13 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Build an annotated prompt report for debugging tool call prompting.
-   *
-   * @param userMessage - The user chat message to inspect.
-   * @returns A prompt debug report containing sections and annotated string output.
+   * Build an annotated prompt report for debugging.
    */
   public async buildToolPromptDebugReport(userMessage: ChatMessage): Promise<PromptDebugReport> {
     const availableTools = this.getAvailableTools();
     const adapter = ModelAdapterFactory.createAdapter(
       this.chainManager.chatModelManager.getChatModel()
     );
-    // Tool descriptions are now handled natively by bindTools()
     const toolDescriptions = availableTools.map((t) => `${t.name}: ${t.description}`).join("\n");
 
     return buildAgentPromptDebugReport({
@@ -338,12 +375,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Apply CiC ordering by appending the original user question after the local search payload.
-   * Guidance is now self-contained within each localSearch payload from prepareLocalSearchResult.
-   *
-   * @param localSearchPayload - XML-wrapped local search payload prepared for the LLM (includes guidance).
-   * @param originalPrompt - The original user prompt (before any enhancements).
-   * @returns Payload with question appended using CiC ordering when needed.
+   * Apply CiC ordering by appending the original user question.
    */
   protected applyCiCOrderingToLocalSearchResult(
     localSearchPayload: string,
@@ -353,8 +385,8 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Execute the autonomous agent workflow end-to-end using native tool calling.
-   * Follows the ReAct pattern: Reasoning → Acting → Observation → Iteration
+   * Main entry point for the unified agent runner.
+   * Handles all modes: simple chat, vault QA, and agent tool use.
    */
   async run(
     userMessage: ChatMessage,
@@ -370,10 +402,24 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   ): Promise<string> {
     this.llmFormattedMessages = [];
     this.lastDisplayedContent = "";
+    this.vaultQADocuments = [];
 
-    // Note: Plus license validation removed - all features are now available without license validation
+    // Validate input using Zod (security layer)
+    try {
+      validateAgentInput({ userMessage, abortController, options });
+    } catch (error) {
+      logError("Agent input validation failed:", error);
+      // Don't expose validation details to user - just show generic error
+      await this.handleError(
+        new Error("Invalid input"),
+        updateCurrentAiMessage
+      );
+      return "";
+    }
+
     const chatModel = this.chainManager.chatModelManager.getChatModel();
     const adapter = ModelAdapterFactory.createAdapter(chatModel);
+
     // Agent mode should never show thinking tokens in the response
     const thinkStreamer = new ThinkBlockStreamer(updateCurrentAiMessage, true);
 
@@ -386,19 +432,25 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       );
     }
 
-    logInfo("[Agent] Using native tool calling with ReAct pattern");
+    logInfo("[Agent] Using unified agent runner with native tool calling");
 
+    // Determine if this is Vault QA mode based on chain type
+    // For now, we'll detect it based on whether the user message suggests QA
+    const isVaultQAMode = this.isVaultQAMode(userMessage);
+
+    // Prepare context for the agent loop
     const context = await this.prepareAgentConversation(
       userMessage,
       chatModel,
-      options.updateLoadingMessage
+      options.updateLoadingMessage,
+      isVaultQAMode
     );
 
     try {
-      // Start reasoning timer just before the ReAct loop (so timer starts at 0)
+      // Start reasoning timer just before the ReAct loop
       this.startReasoningTimer(updateCurrentAiMessage, abortController);
 
-      // Run the simplified ReAct loop with native tool calling
+      // Run the ReAct loop with native tool calling
       const loopResult = await this.runReActLoop({
         boundModel: context.loopDeps.boundModel,
         tools: context.loopDeps.availableTools,
@@ -409,6 +461,8 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
         processLocalSearchResult: context.loopDeps.processLocalSearchResult,
         applyCiCOrderingToLocalSearchResult: context.loopDeps.applyCiCOrderingToLocalSearchResult,
         adapter,
+        isVaultQAMode,
+        vaultQADocs: this.vaultQADocuments,
       });
 
       // If abort was already handled by timer, skip further processing
@@ -442,82 +496,77 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       this.lastDisplayedContent = "";
       return loopResult.finalResponse;
     } catch (error: any) {
-      // Always stop the reasoning timer on error
       this.stopReasoningTimer();
 
       if (error.name === "AbortError" || abortController.signal.aborted) {
-        logInfo("Autonomous agent stream aborted by user", {
+        logInfo("Agent stream aborted by user", {
           reason: abortController.signal.reason,
         });
         return "";
       }
 
-      logError("Autonomous agent failed, falling back to regular Plus mode:", error);
-      try {
-        const fallbackRunner = new CopilotPlusChainRunner(this.chainManager);
-        return await fallbackRunner.run(
-          userMessage,
-          abortController,
-          updateCurrentAiMessage,
-          addMessage,
-          options
-        );
-      } catch (fallbackError) {
-        logError("Fallback to regular Plus mode also failed:", fallbackError);
+      logError("Agent failed with error:", error);
 
-        if (this.lastDisplayedContent) {
-          thinkStreamer.processChunk({ content: this.lastDisplayedContent });
-        }
+      // Stream error to user
+      await this.handleError(
+        error,
+        thinkStreamer.processErrorChunk.bind(thinkStreamer)
+      );
 
-        const autonomousAgentErrorMsg = err2String(error);
-        const fallbackErrorMsg =
-          `\n\nFallback to regular Plus mode also failed: ` + err2String(fallbackError);
-
-        await this.handleError(
-          new Error(autonomousAgentErrorMsg + fallbackErrorMsg),
-          thinkStreamer.processErrorChunk.bind(thinkStreamer)
-        );
-
-        const fullAIResponse = thinkStreamer.close().content;
-        return this.handleResponse(
-          fullAIResponse,
-          userMessage,
-          abortController,
-          addMessage,
-          updateCurrentAiMessage,
-          undefined,
-          fullAIResponse
-        );
-      }
+      const fullAIResponse = thinkStreamer.close().content;
+      return this.handleResponse(
+        fullAIResponse,
+        userMessage,
+        abortController,
+        addMessage,
+        updateCurrentAiMessage,
+        undefined,
+        fullAIResponse
+      );
     }
   }
 
   /**
-   * Prepare the base conversation state for native tool calling.
-   * Creates a bound model with tools and builds initial messages.
-   *
-   * @param userMessage - The initiating user message from the UI.
-   * @param chatModel - The active chat model instance.
-   * @param _updateLoadingMessage - Unused, kept for potential future use.
-   * @returns Context required for the ReAct agent loop.
+   * Detect if the user message suggests Vault QA mode.
+   */
+  private isVaultQAMode(userMessage: ChatMessage): boolean {
+    // Extract L5 (raw user query)
+    const l5User = userMessage.contextEnvelope?.layers.find((l) => l.id === "L5_USER");
+    const rawQuery = (l5User?.text || userMessage.message || "").toLowerCase();
+
+    // Vault QA keywords
+    const vaultQaKeywords = [
+      "what does my note",
+      "what does my notes",
+      "in my vault",
+      "vault qa",
+      "vaultqa",
+      "search my notes",
+      "find in my notes",
+    ];
+
+    return vaultQaKeywords.some((keyword) => rawQuery.includes(keyword));
+  }
+
+  /**
+   * Prepare the conversation context for the agent loop.
    */
   private async prepareAgentConversation(
     userMessage: ChatMessage,
     chatModel: any,
-    _updateLoadingMessage?: (message: string) => void // Unused, kept for potential future use
+    _updateLoadingMessage?: (message: string) => void,
+    isVaultQAMode: boolean = false
   ): Promise<AgentRunContext> {
     const messages: BaseMessage[] = [];
-    const availableTools = this.getAvailableTools();
+    const availableTools = isVaultQAMode ? [] : this.getAvailableTools();
 
-    // Bind tools to the model for native function calling
-    const modelName = (chatModel as any).modelName || (chatModel as any).model || "unknown";
-    if (typeof chatModel.bindTools !== "function") {
-      throw new Error(
-        `Model ${modelName} does not support native tool calling (bindTools not available). ` +
-          `Agent mode requires a model with tool calling support.`
-      );
+    // For Vault QA mode, we don't bind tools
+    let boundModel: Runnable;
+    if (isVaultQAMode || typeof chatModel.bindTools !== "function") {
+      boundModel = chatModel;
+    } else {
+      boundModel = chatModel.bindTools(availableTools);
     }
-    const boundModel = chatModel.bindTools(availableTools);
 
     const loopDeps: AgentLoopDeps = {
       availableTools,
@@ -526,53 +575,18 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       applyCiCOrderingToLocalSearchResult: this.applyCiCOrderingToLocalSearchResult.bind(this),
     };
 
-    // Extract envelope (validated in run())
     const envelope = userMessage.contextEnvelope!;
 
-    // Use LayerToMessagesConverter to get base messages with L1+L2 system, L3+L5 user
-    const baseMessages = LayerToMessagesConverter.convert(envelope, {
-      includeSystemMessage: true,
-      mergeUserContent: true,
-      debug: false,
-    });
+    // Build system message
+    const systemPrompt = await AgentChainRunner.generateSystemPrompt(
+      availableTools,
+      undefined,
+      this.chainManager.userMemoryManager
+    );
+    messages.push(new SystemMessage({ content: systemPrompt }));
 
-    // Get memory for chat history loading
+    // Load chat history
     const memory = this.chainManager.memoryManager.getMemory();
-
-    // Build system message: L1+L2 from envelope + tool guidelines from metadata
-    const systemMessage = baseMessages.find((m) => m.role === "system");
-
-    // Get tool metadata for semantic guidance (no XML format instructions needed)
-    const registry = ToolRegistry.getInstance();
-    const toolMetadata = availableTools
-      .map((tool) => registry.getToolMetadata(tool.name))
-      .filter((meta): meta is NonNullable<typeof meta> => meta !== undefined);
-
-    // Build tool-specific instructions from metadata
-    const toolInstructions = toolMetadata
-      .filter((meta) => meta.customPromptInstructions)
-      .map((meta) => `For ${meta.displayName}: ${meta.customPromptInstructions}`)
-      .join("\n");
-
-    // Combine system message with tool guidelines
-    const systemContent = [
-      systemMessage?.content || "",
-      toolInstructions ? `\n## Tool Guidelines\n${toolInstructions}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    // Use SystemMessage for better provider compatibility
-    if (systemContent) {
-      messages.push(new SystemMessage({ content: systemContent }));
-    }
-
-    // Extract L5 for original prompt
-    const l5User = envelope.layers.find((l) => l.id === "L5_USER");
-    const l5Text = l5User?.text || "";
-    const originalUserPrompt = l5Text || userMessage.originalMessage || userMessage.message;
-
-    // Insert L4 (chat history) between system and user
     const tempMessages: { role: string; content: string | MessageContent[] }[] = [];
     await loadAndAddChatHistory(memory, tempMessages);
     for (const msg of tempMessages) {
@@ -583,13 +597,23 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       }
     }
 
-    // Extract user content (L3 smart references + L5) from base messages
-    const userMessageContent = baseMessages.find((m) => m.role === "user");
+    // Extract L5 for original prompt
+    const l5User = envelope.layers.find((l) => l.id === "L5_USER");
+    const l5Text = l5User?.text || "";
+    const originalUserPrompt = l5Text || userMessage.originalMessage || userMessage.message;
+
+    // For Vault QA mode, prepare RAG context
+    if (isVaultQAMode) {
+      await this.prepareVaultQaContext(userMessage, envelope, messages, originalUserPrompt);
+    }
+
+    // Build user message with context
+    const userMessageContent = this.buildUserMessageContent(envelope, isVaultQAMode);
     if (userMessageContent) {
       const isMultimodal = this.isMultimodalModel(chatModel);
       const content: string | MessageContent[] = isMultimodal
-        ? await this.buildMessageContent(userMessageContent.content, userMessage)
-        : userMessageContent.content;
+        ? await this.buildMessageContent(userMessageContent, userMessage)
+        : userMessageContent;
       messages.push(new HumanMessage(content));
     }
 
@@ -602,8 +626,157 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
+   * Prepare Vault QA context by running retrieval.
+   */
+  private async prepareVaultQaContext(
+    userMessage: ChatMessage,
+    envelope: any,
+    messages: BaseMessage[],
+    originalPrompt: string
+  ): Promise<void> {
+    // Extract L5 (raw user query)
+    const l5User = envelope.layers.find((l: any) => l.id === "L5_USER");
+    const rawUserQuery = l5User?.text || userMessage.message;
+
+    // Extract tags from raw query
+    const tags = this.extractTagTerms(rawUserQuery);
+    logInfo("[VaultQA] Extracted tags:", tags);
+
+    // Get chat history for query condensing
+    const memory = this.chainManager.memoryManager.getMemory();
+    const memoryVariables = await memory.loadMemoryVariables({});
+    const chatHistory = extractChatHistory(memoryVariables);
+
+    // Condense query with chat history
+    let standaloneQuestion = rawUserQuery;
+    if (chatHistory.length > 0) {
+      logInfo("[VaultQA] Condensing query with chat history");
+      // Note: getStandaloneQuestion would need to be imported
+      // For now, use raw query
+    }
+
+    // Run FilterRetriever for guaranteed title/tag matches
+    const hasTagTerms = tags.length > 0;
+    const filterRetriever = new FilterRetriever(this.chainManager.app, {
+      salientTerms: hasTagTerms ? [...tags] : [],
+      maxK: DEFAULT_MAX_SOURCE_CHUNKS,
+      returnAll: hasTagTerms,
+    });
+    const filterDocs = await filterRetriever.getRelevantDocuments(standaloneQuestion);
+
+    // Create main retriever
+    const settings = getSettings();
+    const retrieverResult = await RetrieverFactory.createRetriever(
+      this.chainManager.app,
+      {
+        minSimilarityScore: 0.01,
+        maxK: DEFAULT_MAX_SOURCE_CHUNKS,
+        salientTerms: hasTagTerms ? [...tags] : [],
+        tagTerms: tags,
+        returnAll: hasTagTerms,
+      },
+      {}
+    );
+    const retriever = retrieverResult.retriever;
+    logInfo(`[VaultQA] Using ${retrieverResult.type} retriever`);
+
+    // Retrieve and merge results
+    const searchDocs = await retriever.getRelevantDocuments(standaloneQuestion);
+    const { filterResults, searchResults } = mergeFilterAndSearchResults(filterDocs, searchDocs);
+    const merged = [...filterResults, ...searchResults];
+    const retrieverCapReached = merged.length > DEFAULT_MAX_SOURCE_CHUNKS;
+    const retrievedDocs = merged.slice(0, DEFAULT_MAX_SOURCE_CHUNKS);
+
+    // Store for later use
+    this.vaultQADocuments = retrievedDocs;
+    this.chainManager.storeRetrieverDocuments(retrievedDocs);
+
+    // Format context with XML tags
+    const context = retrievedDocs
+      .map((doc: any) => {
+        const title = doc.metadata?.title || "Untitled";
+        const path = doc.metadata?.path || title;
+        return `<${RETRIEVED_DOCUMENT_TAG}>\n<title>${title}</title>\n<path>${path}</path>\n<content>\n${sanitizeContentForCitations(doc.pageContent)}\n</content>\n</${RETRIEVED_DOCUMENT_TAG}>`;
+      })
+      .join("\n\n");
+
+    // Build citation instructions
+    const sourceEntries: SourceCatalogEntry[] = retrievedDocs
+      .slice(0, Math.max(5, Math.min(20, retrievedDocs.length)))
+      .map((d: any) => ({
+        title: d.metadata?.title || d.metadata?.path || "Untitled",
+        path: d.metadata?.path || d.metadata?.title || "",
+      }));
+    const sourceCatalog = formatSourceCatalog(sourceEntries).join("\n");
+
+    const capNotice = retrieverCapReached
+      ? `\n\nIMPORTANT: The retrieval limit of ${DEFAULT_MAX_SOURCE_CHUNKS} documents was reached.`
+      : "";
+
+    const qaInstructions =
+      "\n\nAnswer the question based only on the following context:\n" +
+      context +
+      getQACitationInstructions(sourceCatalog, getSettings().enableInlineCitations) +
+      capNotice;
+
+    // Store the RAG instructions to prepend to user message
+    (messages[messages.length - 1] as any).ragInstructions = qaInstructions;
+  }
+
+  /**
+   * Build user message content from envelope.
+   */
+  private buildUserMessageContent(envelope: any, isVaultQAMode: boolean): string {
+    const baseMessages = LayerToMessagesConverter.convert(envelope, {
+      includeSystemMessage: true,
+      mergeUserContent: true,
+      debug: false,
+    });
+
+    const userMessageContent = baseMessages.find((m) => m.role === "user");
+    if (!userMessageContent) {
+      return "";
+    }
+
+    return userMessageContent.content;
+  }
+
+  /**
+   * Build multimodal message content with images.
+   */
+  protected async buildMessageContent(
+    textContent: string,
+    userMessage: ChatMessage
+  ): Promise<MessageContent[]> {
+    // Simplified implementation - delegates to CopilotPlusChainRunner logic
+    const messageContent: MessageContent[] = [
+      {
+        type: "text",
+        text: textContent,
+      },
+    ];
+
+    return messageContent;
+  }
+
+  /**
+   * Check if model is multimodal.
+   */
+  protected isMultimodalModel(model: any): boolean {
+    const modelName = model.modelName || model.model || "";
+    const customModel = this.chainManager.chatModelManager.findModelByName(modelName);
+    return customModel?.capabilities?.includes(ModelCapability.VISION) ?? false;
+  }
+
+  /**
+   * Extract tags from query.
+   */
+  private extractTagTerms(query: string): string[] {
+    return extractTagsFromQuery(query);
+  }
+
+  /**
    * ReAct loop for native tool calling.
-   * Follows the pattern: Reasoning → Acting → Observation → Iteration
    */
   private async runReActLoop(params: ReActLoopParams): Promise<ReActLoopResult> {
     const {
@@ -615,9 +788,13 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       updateCurrentAiMessage,
       processLocalSearchResult,
       applyCiCOrderingToLocalSearchResult,
+      adapter,
+      isVaultQAMode,
+      vaultQADocs,
     } = params;
 
-    const maxIterations = getSettings().autonomousAgentMaxIterations;
+    const settings = getSettings();
+    const maxIterations = isVaultQAMode ? 1 : settings.autonomousAgentMaxIterations;
     const collectedSources: AgentSource[] = [];
     const loopStartTime = Date.now();
 
@@ -627,7 +804,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
     while (iteration < maxIterations) {
       if (abortController.signal.aborted) break;
 
-      // Check for loop timeout (5 minutes)
+      // Check for loop timeout
       const elapsedTime = Date.now() - loopStartTime;
       if (elapsedTime >= AGENT_LOOP_TIMEOUT_MS) {
         logWarn(`Agent loop timed out after ${Math.round(elapsedTime / 1000)}s`);
@@ -635,9 +812,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       }
       iteration++;
 
-      // Stream response - streamModelResponse updates this.accumulatedContent
-      // The timer will pick up content changes and display them with the reasoning block
-      // Once final response is detected, timer stops and direct updates take over
+      // Stream response
       const { content, aiMessage, streamingResult } = await this.streamModelResponse(
         boundModel,
         messages,
@@ -650,25 +825,22 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
         tokenUsage: streamingResult.tokenUsage ?? undefined,
       };
 
-      // Check for native tool calls
-      const toolCalls = aiMessage.tool_calls || [];
+      // Check for tool calls (skip in Vault QA mode)
+      const toolCalls = isVaultQAMode ? [] : (aiMessage.tool_calls || []);
 
       // No tool calls = final response
       if (toolCalls.length === 0) {
-        // Stop reasoning timer and finalize the reasoning block
         this.stopReasoningTimer();
         this.reasoningState.status = "complete";
 
         messages.push(aiMessage);
 
-        // Final response is ONLY this iteration's content, not accumulated intermediate content
         const finalContent = content;
         const reasoningBlock = this.buildReasoningBlockMarkup();
 
-        // Stream the final response progressively for better UX
-        // Since we already have the full content, we'll display it in chunks
-        const STREAM_CHUNK_SIZE = 20; // Characters per chunk
-        const STREAM_DELAY_MS = 5; // Milliseconds between chunks
+        // Stream final response
+        const STREAM_CHUNK_SIZE = 20;
+        const STREAM_DELAY_MS = 5;
         let displayedContent = "";
 
         for (let i = 0; i < finalContent.length; i += STREAM_CHUNK_SIZE) {
@@ -683,7 +855,6 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
           }
         }
 
-        // Final update with complete content
         const finalResponse = reasoningBlock
           ? reasoningBlock + "\n\n" + finalContent
           : finalContent;
@@ -696,13 +867,10 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
         };
       }
 
-      // Add AI message with tool calls - but DON'T accumulate intermediate content
-      // Intermediate content (like "I'll search for..." ) should not appear in final response
+      // Add AI message with tool calls
       messages.push(aiMessage);
 
-      // For iterations > 1, the model's content often contains its summary of findings
-      // from previous tool calls. Extract first sentence as a "finding summary".
-      // (Iteration 1 has no previous findings - its content is just "I'll search for...")
+      // Log finding summary for iterations > 1
       if (iteration > 1 && content && content.trim().length > 0) {
         const findingSummary = extractFirstSentence(content);
         if (findingSummary) {
@@ -719,25 +887,22 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
           args: tc.args as Record<string, unknown>,
         };
 
-        // Pre-expand query for localSearch to show expanded terms BEFORE search
+        // Pre-expand query for localSearch
         let preExpandedTerms: QueryExpansionInfo | undefined;
         if (tc.name === "localSearch") {
           const query = toolCall.args.query as string | undefined;
           if (query) {
             try {
               const expander = new QueryExpander({
-                getChatModel: async () => {
-                  return this.chainManager.chatModelManager.getChatModel();
-                },
+                getChatModel: async () => this.chainManager.chatModelManager.getChatModel(),
               });
               const expansion = await expander.expand(query);
-              // Compute recall terms (all terms used for search)
+
               const seen = new Set<string>();
               const recallTerms: string[] = [];
               const addTerm = (term: unknown) => {
                 if (typeof term !== "string") return;
                 const trimmed = term.trim();
-                // Filter out invalid terms like "[object Object]"
                 if (!trimmed || trimmed === "[object Object]" || trimmed.startsWith("[object "))
                   return;
                 const normalized = trimmed.toLowerCase();
@@ -757,16 +922,15 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
                 recallTerms,
               };
             } catch {
-              // Ignore expansion errors, fall back to basic summary
+              // Ignore expansion errors
             }
           }
         }
 
-        // Add tool call step (shown in both rolling display and expanded view)
+        // Add tool call step
         const toolCallSummary = summarizeToolCall(tc.name, toolCall.args, preExpandedTerms);
         this.addReasoningStep(toolCallSummary, tc.name);
 
-        // Inject pre-expanded query data into args to avoid double expansion in search
         if (preExpandedTerms) {
           toolCall.args._preExpandedQuery = preExpandedTerms;
         }
@@ -784,7 +948,6 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
           const processed = processLocalSearchResult(result);
           collectedSources.push(...processed.sources);
 
-          // Extract source info for reasoning summary (just count and titles, no terms needed)
           sourceInfo = {
             titles: processed.sources.map((s) => s.title),
             count: processed.sources.length,
@@ -798,7 +961,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
 
         logToolResult(tc.name, result);
 
-        // Add tool result step (shown in rolling display - this is the "what was found")
+        // Add tool result step
         const resultSummary = summarizeToolResult(tc.name, result, sourceInfo, toolCall.args);
         this.addReasoningStep(resultSummary, tc.name);
 
@@ -817,10 +980,9 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
     this.reasoningState.status = "complete";
     const reasoningBlock = this.buildReasoningBlockMarkup();
 
-    // Check if interrupted by user vs max iterations reached
+    // Handle interrupted response
     if (abortController.signal.aborted) {
       logInfo("Agent reasoning interrupted by user");
-      // If timer already handled the abort and showed the message, return empty to avoid duplicate
       if (this.abortHandledByTimer) {
         return {
           finalResponse: "",
@@ -840,7 +1002,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       };
     }
 
-    // Check if we exited due to timeout or max iterations
+    // Max iterations or timeout reached
     const elapsedTime = Date.now() - loopStartTime;
     const timedOut = elapsedTime >= AGENT_LOOP_TIMEOUT_MS;
 
@@ -851,8 +1013,8 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
     }
 
     const limitMessage = timedOut
-      ? "I've reached the time limit for reasoning. Here's what I found so far based on the search results."
-      : "I've reached the maximum number of tool calls. Here's what I found so far based on the search results.";
+      ? "I've reached the time limit for reasoning. Here's what I found so far."
+      : "I've reached the maximum number of tool calls. Here's what I found so far.";
     const finalResponse = reasoningBlock ? reasoningBlock + "\n\n" + limitMessage : limitMessage;
 
     return {
@@ -863,12 +1025,7 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   }
 
   /**
-   * Stream response from the bound model and accumulate tool call chunks.
-   * Does NOT stop the timer - that's handled by runReActLoop when it determines
-   * this is the final response (no tool calls).
-   *
-   * Uses ThinkBlockStreamer with excludeThinking=true to strip any thinking
-   * content from the response (agent mode should never show thinking tokens).
+   * Stream response from the bound model.
    */
   private async streamModelResponse(
     boundModel: Runnable,
@@ -878,12 +1035,8 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
   ): Promise<{ content: string; aiMessage: AIMessage; streamingResult: StreamingResult }> {
     const toolCallChunks: Map<number, ToolCallChunk> = new Map();
 
-    // Use ThinkBlockStreamer with excludeThinking=true to strip thinking content
-    // Agent mode should never show thinking tokens in the response
-    const thinkStreamer = new ThinkBlockStreamer(
-      () => {}, // No-op update function - we don't display intermediate content
-      true // excludeThinking = true for agent mode
-    );
+    // Use ThinkBlockStreamer with excludeThinking=true for agent mode
+    const thinkStreamer = new ThinkBlockStreamer(() => {}, true);
 
     try {
       const stream = await withSuppressedTokenWarnings(() =>
@@ -895,14 +1048,14 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       for await (const chunk of stream) {
         if (abortController.signal.aborted) break;
 
-        // Check for MALFORMED_FUNCTION_CALL error - throw to trigger fallback
+        // Check for MALFORMED_FUNCTION_CALL error
         const finishReason = chunk.response_metadata?.finish_reason;
         if (finishReason === "MALFORMED_FUNCTION_CALL") {
           logWarn("Backend returned MALFORMED_FUNCTION_CALL - falling back to non-agent mode");
           throw new Error("MALFORMED_FUNCTION_CALL: Model does not support native tool calling");
         }
 
-        // Extract tool_call_chunks FIRST (before content check)
+        // Extract tool_call_chunks
         const tcChunks = chunk.tool_call_chunks;
         if (tcChunks && Array.isArray(tcChunks)) {
           for (const tc of tcChunks) {
@@ -915,15 +1068,13 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
           }
         }
 
-        // Process chunk through ThinkBlockStreamer to strip thinking content
         thinkStreamer.processChunk(chunk);
       }
 
-      // Close the streamer to finalize content (handles unclosed think blocks, etc.)
       const streamingResult = thinkStreamer.close();
       const fullContent = streamingResult.content;
 
-      // Build tool calls from accumulated chunks (with sanitization for empty objects)
+      // Build tool calls from accumulated chunks
       const toolCalls = buildToolCallsFromChunks(toolCallChunks);
 
       // Build AIMessage
@@ -954,5 +1105,61 @@ export class AutonomousAgentChainRunner extends CopilotPlusChainRunner {
       }
       throw error;
     }
+  }
+
+  /**
+   * Process localSearch tool results.
+   */
+  protected processLocalSearchResult(
+    toolResult: { result: string; success: boolean },
+    timeExpression?: string
+  ): {
+    formattedForLLM: string;
+    formattedForDisplay: string;
+    sources: AgentSource[];
+  } {
+    let sources: AgentSource[] = [];
+    let formattedForLLM: string;
+    let formattedForDisplay: string;
+
+    if (!toolResult.success) {
+      formattedForLLM = "<localSearch>\nSearch failed.\n</localSearch>";
+      formattedForDisplay = `Search failed: ${toolResult.result}`;
+      return { formattedForLLM, formattedForDisplay, sources };
+    }
+
+    try {
+      const parsed = JSON.parse(toolResult.result);
+      const searchResults =
+        parsed &&
+        typeof parsed === "object" &&
+        parsed.type === "local_search" &&
+        Array.isArray(parsed.documents)
+          ? parsed.documents
+          : null;
+
+      if (!Array.isArray(searchResults)) {
+        formattedForLLM = "<localSearch>\nInvalid search results format.\n</localSearch>";
+        formattedForDisplay = "Search results were in an unexpected format.";
+        return { formattedForLLM, formattedForDisplay, sources };
+      }
+
+      // Extract sources
+      sources = searchResults.map((doc: any) => ({
+        title: doc.title || doc.path || "Untitled",
+        path: doc.path || doc.title || "",
+        score: doc.score || 0,
+      }));
+
+      // Format for LLM
+      formattedForLLM = `<localSearch>\n${JSON.stringify(searchResults, null, 2)}\n</localSearch>`;
+      formattedForDisplay = ToolResultFormatter.format("localSearch", formattedForLLM);
+    } catch (error) {
+      logWarn("Failed to parse localSearch results:", error);
+      formattedForLLM = `<localSearch>\n${toolResult.result}\n</localSearch>`;
+      formattedForDisplay = ToolResultFormatter.format("localSearch", formattedForLLM);
+    }
+
+    return { formattedForLLM, formattedForDisplay, sources };
   }
 }

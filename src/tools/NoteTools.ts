@@ -365,19 +365,11 @@ const readNoteSchema = z.object({
       "Full path to the note (relative to the vault root) that needs to be read, such as 'Projects/plan.md'."
     ),
   chunkIndex: z
-    .preprocess((value) => {
-      if (typeof value === "string") {
-        const trimmed = value.trim();
-        if (trimmed.length === 0) {
-          return undefined;
-        }
-        const parsed = Number(trimmed);
-        return Number.isFinite(parsed) ? parsed : value;
-      }
-      return value;
-    }, z.number().int().min(0))
+    .number()
+    .int()
+    .min(0)
     .optional()
-    .describe("0-based chunk index to read. Omit to read the first chunk."),
+    .describe("0-based chunk index to read. Omit to read the first chunk (0)."),
 });
 
 const readNoteTool = createLangChainTool({

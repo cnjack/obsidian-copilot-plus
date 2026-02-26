@@ -1,4 +1,30 @@
 import { StructuredTool } from "@langchain/core/tools";
+import { z } from "zod";
+import { zodToJsonSchema, JSONSchema } from "./zodToJsonSchema";
+
+/**
+ * Permission levels for tool execution
+ */
+export type ToolPermission = "read" | "write" | "admin";
+
+/**
+ * Permission check result
+ */
+export interface PermissionCheckResult {
+  allowed: boolean;
+  reason?: string;
+  requiredPermission?: ToolPermission;
+}
+
+/**
+ * Tool execution result
+ */
+export interface ToolExecutionResult<T = unknown> {
+  success: boolean;
+  result?: T;
+  error?: string;
+  executionTimeMs?: number;
+}
 
 /**
  * Tool metadata for registration and UI display.
@@ -18,6 +44,9 @@ export interface ToolMetadata {
   isBackground?: boolean; // If true, tool execution is not shown to user
   isPlusOnly?: boolean; // If true, tool requires Plus subscription
   requiresUserMessageContent?: boolean; // If true, tool receives original user message for URL extraction
+  // Permission properties
+  permission?: ToolPermission; // Required permission level (default: "read")
+  allowsAnnotatedOnly?: boolean; // If true, only allows operations on annotated files
 }
 
 /**
@@ -166,5 +195,261 @@ export class ToolRegistry {
    */
   clear(): void {
     this.tools.clear();
+  }
+
+  /**
+   * Clear only non-MCP tools, preserving MCP tools registered by MCPManager.
+   * Used by initializeBuiltinTools to reinitialize builtins without disconnecting MCP servers.
+   */
+  clearBuiltins(): void {
+    for (const [id, def] of this.tools) {
+      if (def.metadata.category !== "mcp") {
+        this.tools.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Clear only MCP tools, used by MCPManager when reinitializing connections.
+   */
+  clearMCPTools(): void {
+    for (const [id, def] of this.tools) {
+      if (def.metadata.category === "mcp") {
+        this.tools.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Check if a tool can be executed based on permissions and context
+   */
+  checkPermission(toolId: string, context: {
+    hasPlusLicense: boolean;
+    vaultAvailable: boolean;
+    hasWritePermission: boolean;
+    isAnnotatedFile?: boolean;
+  }): PermissionCheckResult {
+    const definition = this.tools.get(toolId);
+
+    if (!definition) {
+      return {
+        allowed: false,
+        reason: `Tool '${toolId}' not found`,
+      };
+    }
+
+    const { metadata } = definition;
+
+    // Plus license check removed - all tools are now available without license validation
+
+    // Check vault requirement
+    if (metadata.requiresVault && !context.vaultAvailable) {
+      return {
+        allowed: false,
+        reason: "Tool requires vault access",
+        requiredPermission: metadata.permission,
+      };
+    }
+
+    // Check write permission for write/admin tools
+    const requiredPermission = metadata.permission || "read";
+    if (requiredPermission === "write" && !context.hasWritePermission) {
+      return {
+        allowed: false,
+        reason: "Tool requires write permission",
+        requiredPermission: "write",
+      };
+    }
+
+    if (requiredPermission === "admin" && !context.hasWritePermission) {
+      return {
+        allowed: false,
+        reason: "Tool requires admin permission",
+        requiredPermission: "admin",
+      };
+    }
+
+    // Check annotated-only restriction
+    if (metadata.allowsAnnotatedOnly && !context.isAnnotatedFile) {
+      return {
+        allowed: false,
+        reason: "Tool can only operate on annotated/selected files",
+        requiredPermission: metadata.permission,
+      };
+    }
+
+    return {
+      allowed: true,
+      requiredPermission: metadata.permission,
+    };
+  }
+
+  /**
+   * Execute a tool with timeout and error handling
+   */
+  async executeTool(
+    toolId: string,
+    args: Record<string, unknown>,
+    options: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    } = {}
+  ): Promise<ToolExecutionResult> {
+    const definition = this.tools.get(toolId);
+
+    if (!definition) {
+      return {
+        success: false,
+        error: `Tool '${toolId}' not found`,
+      };
+    }
+
+    const { tool, metadata } = definition;
+    const startTime = Date.now();
+    const timeout = options.timeoutMs || metadata.timeoutMs || 30000; // Default 30s
+
+    // Create abort controller for timeout
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort(new Error(`Tool execution timeout: ${toolId}`));
+    }, timeout);
+
+    // Also respect external abort signal
+    if (options.signal) {
+      options.signal.addEventListener("abort", () => {
+        abortController.abort(options.signal?.reason);
+      }, { once: true });
+    }
+
+    try {
+      // Validate args against schema first
+      // Cast to z.ZodType to access safeParse method
+      const schemaAsZod = tool.schema as unknown as z.ZodType;
+      const validationResult = schemaAsZod?.safeParse(args);
+      if (validationResult && !validationResult.success) {
+        clearTimeout(timeoutId);
+        return {
+          success: false,
+          error: `Invalid arguments: ${validationResult.error.message}`,
+        };
+      }
+
+      // Execute the tool
+      const result = await tool.call(args, {
+        signal: abortController.signal,
+      });
+
+      clearTimeout(timeoutId);
+      const executionTime = Date.now() - startTime;
+
+      return {
+        success: true,
+        result: typeof result === "string" ? result : JSON.stringify(result),
+        executionTimeMs: executionTime,
+      };
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      const executionTime = Date.now() - startTime;
+
+      // Check if it was an abort
+      if (error.name === "AbortError" || error.message?.includes("timeout")) {
+        return {
+          success: false,
+          error: `Tool execution timed out after ${timeout}ms`,
+          executionTimeMs: executionTime,
+        };
+      }
+
+      return {
+        success: false,
+        error: error.message || `Error executing tool '${toolId}'`,
+        executionTimeMs: executionTime,
+      };
+    }
+  }
+
+  /**
+   * Get JSON Schema for a tool's parameters
+   * Used for LLM tool descriptions
+   */
+  getToolJsonSchema(toolId: string): JSONSchema | undefined {
+    const definition = this.tools.get(toolId);
+    if (!definition) {
+      return undefined;
+    }
+
+    const { tool } = definition;
+
+    // Cast to z.ZodType for type compatibility
+    const schemaAsZod = tool.schema as unknown as z.ZodType;
+
+    // Handle void schema (no parameters)
+    if (schemaAsZod instanceof z.ZodVoid) {
+      return {
+        type: "object",
+        properties: {},
+        required: [],
+      };
+    }
+
+    // Convert Zod schema to JSON Schema
+    return zodToJsonSchema(schemaAsZod);
+  }
+
+  /**
+   * Get all tools with their JSON schemas for LLM tool registration
+   */
+  getToolsWithSchemas(enabledToolIds: Set<string>, vaultAvailable: boolean): Array<{
+    name: string;
+    description: string;
+    parameters: JSONSchema;
+  }> {
+    const tools = this.getEnabledTools(enabledToolIds, vaultAvailable);
+
+    return tools.map((tool) => {
+      // Cast to z.ZodType for type compatibility
+      const schemaAsZod = tool.schema as unknown as z.ZodType;
+      return {
+        name: tool.name,
+        description: tool.description,
+        parameters: zodToJsonSchema(schemaAsZod),
+      };
+    });
+  }
+
+  /**
+   * Unregister a tool by ID
+   */
+  unregister(toolId: string): boolean {
+    if (this.tools.has(toolId)) {
+      this.tools.delete(toolId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Check if a tool is registered
+   */
+  isRegistered(toolId: string): boolean {
+    return this.tools.has(toolId);
+  }
+
+  /**
+   * Get tools by permission level
+   */
+  getToolsByPermission(permission: ToolPermission): ToolDefinition[] {
+    return Array.from(this.tools.values()).filter(
+      (def) => (def.metadata.permission || "read") === permission
+    );
+  }
+
+  /**
+   * Get write-capable tools (for permission prompts)
+   */
+  getWriteCapableTools(): ToolDefinition[] {
+    return Array.from(this.tools.values()).filter(
+      (def) => def.metadata.permission === "write" || def.metadata.permission === "admin"
+    );
   }
 }

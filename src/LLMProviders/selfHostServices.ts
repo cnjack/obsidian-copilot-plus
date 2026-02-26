@@ -1,42 +1,8 @@
-import { type Youtube4llmResponse } from "@/LLMProviders/brevilabsClient";
-import { getDecryptedKey } from "@/encryptionService";
-import { logError, logInfo } from "@/logger";
-import { getSettings } from "@/settings/model";
+// Web search and YouTube transcription self-host services removed.
+// Use MCP servers for web search and YouTube capabilities.
 
-const FIRECRAWL_SEARCH_URL = "https://api.firecrawl.dev/v2/search";
-const PERPLEXITY_CHAT_URL = "https://api.perplexity.ai/chat/completions";
-const SUPADATA_TRANSCRIPT_URL = "https://api.supadata.ai/v1/transcript";
+export {};
 
-/** Poll interval for Supadata async jobs (ms) */
-const SUPADATA_POLL_INTERVAL = 2000;
-/** Maximum time to wait for a Supadata async job (ms) */
-const SUPADATA_POLL_TIMEOUT = 60000;
-
-/** Clean web search result — no legacy Perplexity wrapper */
-export interface SelfHostWebSearchResult {
-  content: string;
-  citations: string[];
-}
-
-interface FirecrawlSearchResult {
-  title?: string;
-  description?: string;
-  url?: string;
-}
-
-/**
- * Check whether the currently selected self-host search provider has an API key configured.
- */
-export function hasSelfHostSearchKey(): boolean {
-  const settings = getSettings();
-  switch (settings.selfHostSearchProvider) {
-    case "perplexity":
-      return !!settings.perplexityApiKey;
-    case "firecrawl":
-    default:
-      return !!settings.firecrawlApiKey;
-  }
-}
 
 /**
  * Web search via Firecrawl direct API (self-host mode).

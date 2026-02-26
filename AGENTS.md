@@ -4,7 +4,7 @@ This file provides guidance to any coding agent when working with code in this r
 
 ## Overview
 
-Copilot for Obsidian is an AI-powered assistant plugin that integrates various LLM providers (OpenAI, Anthropic, Google, etc.) with Obsidian. It provides chat interfaces, autocomplete, semantic search, and various AI-powered commands for note-taking and knowledge management.
+Agent Copilot for Obsidian is a personal fork of Copilot for Obsidian. It is an AI-powered assistant plugin that integrates various LLM providers (OpenAI, Anthropic, Google, etc.) with Obsidian. It provides chat interfaces, autocomplete, semantic search, and various AI-powered commands for note-taking and knowledge management.
 
 ## Development Commands
 

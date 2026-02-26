@@ -4,11 +4,8 @@ import {
   Twitter4llmResponse,
   Url4llmResponse,
 } from "@/LLMProviders/brevilabsClient";
-import { selfHostYoutube4llm } from "@/LLMProviders/selfHostServices";
 import { err2String, isTwitterUrl, isYoutubeUrl } from "@/utils";
 import { logError } from "@/logger";
-import { isSelfHostModeValid } from "@/plusUtils";
-import { getSettings } from "@/settings/model";
 
 export interface MentionData {
   type: string;
@@ -61,10 +58,7 @@ export class Mention {
 
   async processYoutubeUrl(url: string): Promise<{ transcript: string; error?: string }> {
     try {
-      const response =
-        isSelfHostModeValid() && getSettings().supadataApiKey
-          ? await selfHostYoutube4llm(url)
-          : await this.brevilabsClient.youtube4llm(url);
+      const response = await this.brevilabsClient.youtube4llm(url);
       return { transcript: response.response.transcript };
     } catch (error) {
       const msg = err2String(error);

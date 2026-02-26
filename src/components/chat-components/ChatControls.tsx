@@ -1,4 +1,4 @@
-import { getCurrentProject, setCurrentProject, setProjectLoading, useChainType } from "@/aiParams";
+import { getCurrentProject, setProjectLoading, useChainType } from "@/aiParams";
 import { ProjectContextCache } from "@/cache/projectContextCache";
 import { ChainType } from "@/chainFactory";
 import { ConfirmModal } from "@/components/modals/ConfirmModal";
@@ -6,9 +6,8 @@ import { Button } from "@/components/ui/button";
 import { DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { SettingSwitch } from "@/components/ui/setting-switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { PLUS_UTM_MEDIUMS } from "@/constants";
 import { logError } from "@/logger";
-import { navigateToPlusPage, useIsPlusUser } from "@/plusUtils";
+import { useIsPlusUser } from "@/plusUtils";
 import { updateSetting, useSettingsValue } from "@/settings/model";
 import { Docs4LLMParser } from "@/tools/FileParserManager";
 import { isRateLimitError } from "@/utils/rateLimitUtils";
@@ -16,16 +15,13 @@ import { DropdownMenu, DropdownMenuTrigger } from "@radix-ui/react-dropdown-menu
 import {
   AlertTriangle,
   CheckCircle,
-  ChevronDown,
   Download,
   FileText,
   History,
-  LibraryBig,
   MessageCirclePlus,
   MoreHorizontal,
   RefreshCw,
   Sparkles,
-  SquareArrowOutUpRight,
 } from "lucide-react";
 import { Notice } from "obsidian";
 import React from "react";
@@ -198,105 +194,13 @@ export function ChatControls({
   latestTokenCount,
 }: ChatControlsProps) {
   const settings = useSettingsValue();
-  const [selectedChain, setSelectedChain] = useChainType();
+  const [selectedChain] = useChainType();
   const isPlusUser = useIsPlusUser();
-
-  const handleModeChange = async (chainType: ChainType) => {
-    // If leaving project mode with autosave enabled, save chat BEFORE clearing project context
-    // This ensures the chat is saved with the correct project prefix
-    const isLeavingProjectMode =
-      selectedChain === ChainType.PROJECT_CHAIN && chainType !== ChainType.PROJECT_CHAIN;
-    if (isLeavingProjectMode && settings.autosaveChat) {
-      await onSaveAsNote();
-    }
-
-    setSelectedChain(chainType);
-    onModeChange(chainType);
-    if (chainType !== ChainType.PROJECT_CHAIN) {
-      setCurrentProject(null);
-      onCloseProject?.();
-    }
-  };
 
   return (
     <div className="tw-flex tw-w-full tw-items-center tw-justify-between tw-p-1">
       <div className="tw-flex-1">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost2" size="fit" className="tw-ml-1 tw-text-sm tw-text-muted">
-              {selectedChain === ChainType.LLM_CHAIN && "chat (free)"}
-              {selectedChain === ChainType.VAULT_QA_CHAIN && "vault QA (free)"}
-              {selectedChain === ChainType.COPILOT_PLUS_CHAIN && (
-                <div className="tw-flex tw-items-center tw-gap-1">
-                  <Sparkles className="tw-size-4" />
-                  copilot plus
-                </div>
-              )}
-              {selectedChain === ChainType.PROJECT_CHAIN && "projects (alpha)"}
-              <ChevronDown className="tw-mt-0.5 tw-size-5" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem
-              onSelect={() => {
-                handleModeChange(ChainType.LLM_CHAIN);
-              }}
-            >
-              chat (free)
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                handleModeChange(ChainType.VAULT_QA_CHAIN);
-              }}
-            >
-              vault QA (free)
-            </DropdownMenuItem>
-            {isPlusUser ? (
-              <DropdownMenuItem
-                onSelect={() => {
-                  handleModeChange(ChainType.COPILOT_PLUS_CHAIN);
-                }}
-              >
-                <div className="tw-flex tw-items-center tw-gap-1">
-                  <Sparkles className="tw-size-4" />
-                  copilot plus
-                </div>
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                onSelect={() => {
-                  navigateToPlusPage(PLUS_UTM_MEDIUMS.CHAT_MODE_SELECT);
-                  onCloseProject?.();
-                }}
-              >
-                copilot plus
-                <SquareArrowOutUpRight className="tw-size-3" />
-              </DropdownMenuItem>
-            )}
-
-            {isPlusUser ? (
-              <DropdownMenuItem
-                className="tw-flex tw-items-center tw-gap-1"
-                onSelect={() => {
-                  handleModeChange(ChainType.PROJECT_CHAIN);
-                }}
-              >
-                <LibraryBig className="tw-size-4" />
-                projects (alpha)
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                onSelect={() => {
-                  navigateToPlusPage(PLUS_UTM_MEDIUMS.CHAT_MODE_SELECT);
-                  onCloseProject?.();
-                }}
-              >
-                copilot plus
-                <SquareArrowOutUpRight className="tw-size-3" />
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Mode switcher removed - unified Agent mode is now the default */}
       </div>
       <div className="tw-flex tw-items-center tw-gap-1">
         <div className="tw-mr-2">
@@ -310,7 +214,7 @@ export function ChatControls({
           </TooltipTrigger>
           <TooltipContent>New Chat</TooltipContent>
         </Tooltip>
-        {selectedChain !== ChainType.PROJECT_CHAIN && <ChatSettingsPopover />}
+        <ChatSettingsPopover />
         {!settings.autosaveChat && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -384,6 +288,7 @@ export function ChatControls({
               </div>
               <SettingSwitch checked={settings.autoAcceptEdits} />
             </DropdownMenuItem>
+            {/* Show project-specific options when in project mode, otherwise show vault options */}
             {selectedChain === ChainType.PROJECT_CHAIN ? (
               <>
                 <DropdownMenuItem

@@ -44,6 +44,7 @@ import { ChatUIState } from "@/state/ChatUIState";
 import { VaultDataManager } from "@/state/vaultDataAtoms";
 import { FileParserManager } from "@/tools/FileParserManager";
 import { initializeBuiltinTools } from "@/tools/builtinTools";
+import { MCPManager } from "@/tools/MCPManager";
 import {
   ChatSelectionHighlightController,
   hideChatSelectionHighlight,
@@ -94,6 +95,20 @@ export default class CopilotPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Debounce MCP re-initialization to avoid reconnecting on every keystroke while
+    // the user is editing the mcpServersConfig textarea in settings.
+    let mcpReinitTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedMcpReinit = (config: string) => {
+      if (mcpReinitTimer !== null) clearTimeout(mcpReinitTimer);
+      mcpReinitTimer = setTimeout(() => {
+        mcpReinitTimer = null;
+        MCPManager.getInstance()
+          .initialize(config)
+          .catch((err) => logWarn("[MCPManager] Re-initialization failed:", err));
+      }, 1500);
+    };
+
     this.settingsUnsubscriber = subscribeToSettingsChange(async (prev, next) => {
       if (next.enableEncryption) {
         await this.saveData(await encryptAllKeys(next));
@@ -101,6 +116,12 @@ export default class CopilotPlugin extends Plugin {
         await this.saveData(next);
       }
       registerCommands(this, prev, next);
+
+      // Re-initialize MCP servers if config changed (debounced to prevent rapid reconnects
+      // when user is typing in the config textarea)
+      if (prev.mcpServersConfig !== next.mcpServersConfig) {
+        debouncedMcpReinit(next.mcpServersConfig);
+      }
     });
     this.addSettingTab(new CopilotSettingTab(this.app, this));
 
@@ -108,6 +129,14 @@ export default class CopilotPlugin extends Plugin {
 
     // Initialize built-in tools with vault access
     initializeBuiltinTools(this.app.vault);
+
+    // Initialize MCP servers (async, non-blocking)
+    const settings = getSettings();
+    if (settings.mcpServersConfig) {
+      MCPManager.getInstance().initialize(settings.mcpServersConfig).catch((err) =>
+        logWarn("[MCPManager] Initialization failed:", err)
+      );
+    }
 
     // Initialize BrevilabsClient
     this.brevilabsClient = BrevilabsClient.getInstance();
@@ -232,6 +261,11 @@ export default class CopilotPlugin extends Plugin {
     if (this.projectManager) {
       this.projectManager.onunload();
     }
+
+    // Disconnect MCP servers
+    MCPManager.getInstance().disconnect().catch((err) =>
+      logWarn("[MCPManager] Disconnect failed during unload:", err)
+    );
 
     // Cleanup VaultDataManager event listeners
     const vaultDataManager = VaultDataManager.getInstance();
@@ -563,10 +597,13 @@ export default class CopilotPlugin extends Plugin {
     const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEWTYPE);
     if (leaves.length === 0) {
       if (getSettings().defaultOpenArea === DEFAULT_OPEN_AREA.VIEW) {
-        await this.app.workspace.getRightLeaf(false).setViewState({
-          type: CHAT_VIEWTYPE,
-          active: true,
-        });
+        const rightLeaf = this.app.workspace.getRightLeaf(false);
+        if (rightLeaf) {
+          await rightLeaf.setViewState({
+            type: CHAT_VIEWTYPE,
+            active: true,
+          });
+        }
       } else {
         await this.app.workspace.getLeaf(true).setViewState({
           type: CHAT_VIEWTYPE,

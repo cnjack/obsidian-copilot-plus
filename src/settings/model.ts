@@ -6,8 +6,6 @@ import { type ChainType } from "@/chainFactory";
 import { type SortStrategy, isSortStrategy } from "@/utils/recentUsageManager";
 import {
   AGENT_MAX_ITERATIONS_LIMIT,
-  BUILTIN_CHAT_MODELS,
-  BUILTIN_EMBEDDING_MODELS,
   COPILOT_FOLDER_ROOT,
   DEFAULT_OPEN_AREA,
   DEFAULT_QA_EXCLUSIONS_SETTING,
@@ -15,6 +13,21 @@ import {
   EmbeddingModelProviders,
   SEND_SHORTCUT,
 } from "@/constants";
+
+// Re-export new AgentSettings types for gradual migration
+// Note: Import functions directly from ./agentSettings to avoid circular dependency
+export type {
+  AgentSettings,
+  Providers,
+  ProviderConfig,
+  Models,
+  Retrieval,
+  RetrievalMode,
+  Tools,
+  ContextBehavior,
+  Conversation,
+  AdvancedSettings,
+} from "./agentSettings";
 
 /**
  * We used to store commands in the settings file with the following interface.
@@ -45,6 +58,20 @@ export interface LegacyCommandSettings {
   showInContextMenu: boolean;
 }
 
+/**
+ * @deprecated Use AgentSettings instead.
+ *
+ * CopilotSettings is the legacy flat settings structure.
+ * For new code, use the nested AgentSettings structure which organizes
+ * settings into logical groups: providers, models, retrieval, tools,
+ * contextBehavior, and conversation.
+ *
+ * Migration utilities are available:
+ * - migrateToAgentSettings() - Convert CopilotSettings to AgentSettings
+ * - migrateFromAgentSettings() - Convert AgentSettings to CopilotSettings
+ *
+ * @see AgentSettings
+ */
 export interface CopilotSettings {
   userId: string;
   plusLicenseKey: string;
@@ -123,7 +150,6 @@ export interface CopilotSettings {
   inlineEditCommands: LegacyCommandSettings[] | undefined;
   projectList: Array<ProjectConfig>;
   passMarkdownImages: boolean;
-  enableAutonomousAgent: boolean;
   enableCustomPromptTemplating: boolean;
   /** Enable semantic search using Orama for meaning-based document retrieval */
   enableSemanticSearchV3: boolean;
@@ -139,14 +165,8 @@ export interface CopilotSettings {
   selfHostUrl: string;
   /** API key for the self-host mode backend (if required) */
   selfHostApiKey: string;
-  /** Which provider to use for self-host web search */
+  /** Which provider to use for self-host web search - kept for migration compat */
   selfHostSearchProvider: "firecrawl" | "perplexity";
-  /** Firecrawl API key for self-host web search */
-  firecrawlApiKey: string;
-  /** Perplexity API key for self-host web search via Sonar */
-  perplexityApiKey: string;
-  /** Supadata API key for self-host YouTube transcripts */
-  supadataApiKey: string;
   /** Enable lexical boosts (folder and graph) in search - default: true */
   enableLexicalBoosts: boolean;
   /**
@@ -191,10 +211,17 @@ export interface CopilotSettings {
    * Empty string means no custom system prompt (use builtin)
    */
   defaultSystemPromptTitle: string;
+  /** JSON string containing MCP server configuration (mcpServers key) */
+  mcpServersConfig: string;
   /** Token threshold for auto-compacting large context (range: 64k-1M tokens, default: 128000) */
   autoCompactThreshold: number;
   /** Folder where converted document markdown files are saved */
   convertedDocOutputFolder: string;
+  // Migration tracking fields (internal use)
+  /** Indicates if settings have been migrated from old format */
+  _migrationCompleted?: boolean;
+  /** Version of migration applied */
+  _migrationVersion?: string;
 }
 
 export const settingsStore = createStore();
@@ -283,12 +310,7 @@ export function getSettings(): Readonly<CopilotSettings> {
  * Resets the settings to the default values.
  */
 export function resetSettings(): void {
-  const defaultSettingsWithBuiltIns = {
-    ...DEFAULT_SETTINGS,
-    activeModels: BUILTIN_CHAT_MODELS.map((model) => ({ ...model, enabled: true })),
-    activeEmbeddingModels: BUILTIN_EMBEDDING_MODELS.map((model) => ({ ...model, enabled: true })),
-  };
-  setSettings(defaultSettingsWithBuiltIns);
+  setSettings({ ...DEFAULT_SETTINGS });
 }
 
 /**
@@ -319,7 +341,7 @@ export function useSettingsValue(): Readonly<CopilotSettings> {
  * Sanitizes the settings to ensure they are valid.
  * Note: This will be better handled by Zod in the future.
  */
-export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
+export function sanitizeSettings(settings: CopilotSettings | undefined): CopilotSettings {
   // If settings is null/undefined, use DEFAULT_SETTINGS
   const settingsToSanitize = settings || DEFAULT_SETTINGS;
 
@@ -330,10 +352,7 @@ export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
   // fix: Maintain consistency between EmbeddingModelProviders.AZURE_OPENAI and ChatModelProviders.AZURE_OPENAI,
   // where it was 'azure_openai' before EmbeddingModelProviders.AZURE_OPENAI.
   if (!settingsToSanitize.activeEmbeddingModels) {
-    settingsToSanitize.activeEmbeddingModels = BUILTIN_EMBEDDING_MODELS.map((model) => ({
-      ...model,
-      enabled: true,
-    }));
+    settingsToSanitize.activeEmbeddingModels = [];
   } else {
     settingsToSanitize.activeEmbeddingModels = settingsToSanitize.activeEmbeddingModels.map((m) => {
       return {
@@ -569,13 +588,48 @@ export function sanitizeSettings(settings: CopilotSettings): CopilotSettings {
 
   sanitizedSettings.qaExclusions = sanitizeQaExclusions(settingsToSanitize.qaExclusions);
 
+  // Auto-add the embedding model derived from embeddingModelKey if it's not in activeEmbeddingModels.
+  // This prevents "No embedding model found" errors when the key is set but the model list is empty.
+  const embKey = sanitizedSettings.embeddingModelKey;
+  if (
+    embKey &&
+    !sanitizedSettings.activeEmbeddingModels.some((m) => getModelKeyFromModel(m) === embKey)
+  ) {
+    const separatorIdx = embKey.lastIndexOf("|");
+    if (separatorIdx > 0) {
+      const name = embKey.slice(0, separatorIdx);
+      const provider = embKey.slice(separatorIdx + 1);
+      sanitizedSettings.activeEmbeddingModels.push({
+        name,
+        provider,
+        enabled: true,
+        isEmbeddingModel: true,
+      });
+    }
+  }
+
+  // Auto-add the chat model derived from defaultModelKey if it's not in activeModels.
+  const chatKey = sanitizedSettings.defaultModelKey;
+  if (chatKey && !sanitizedSettings.activeModels.some((m) => getModelKeyFromModel(m) === chatKey)) {
+    const separatorIdx = chatKey.lastIndexOf("|");
+    if (separatorIdx > 0) {
+      const name = chatKey.slice(0, separatorIdx);
+      const provider = chatKey.slice(separatorIdx + 1);
+      sanitizedSettings.activeModels.push({
+        name,
+        provider,
+        enabled: true,
+      });
+    }
+  }
+
   return sanitizedSettings;
 }
 
 function mergeAllActiveModelsWithCoreModels(settings: CopilotSettings): CopilotSettings {
-  settings.activeModels = mergeActiveModels(settings.activeModels, BUILTIN_CHAT_MODELS);
+  // No built-in models to merge anymore
   settings.activeEmbeddingModels = filterUnsupportedEmbeddingModels(
-    mergeActiveModels(settings.activeEmbeddingModels, BUILTIN_EMBEDDING_MODELS)
+    settings.activeEmbeddingModels || []
   );
   return settings;
 }

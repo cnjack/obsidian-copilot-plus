@@ -1,32 +1,19 @@
-import { ChainType } from "@/chainFactory";
 import { Button } from "@/components/ui/button";
 import { HelpTooltip } from "@/components/ui/help-tooltip";
 import { Input } from "@/components/ui/input";
 import { getModelDisplayWithIcons } from "@/components/ui/model-display";
 import { SettingItem } from "@/components/ui/setting-item";
-import { DEFAULT_OPEN_AREA, PLUS_UTM_MEDIUMS, SEND_SHORTCUT } from "@/constants";
-import { useTab } from "@/contexts/TabContext";
+import { DEFAULT_OPEN_AREA, SEND_SHORTCUT } from "@/constants";
 import { cn } from "@/lib/utils";
-import { createPlusPageUrl } from "@/plusUtils";
 import { getModelKeyFromModel, updateSetting, useSettingsValue } from "@/settings/model";
-import { PlusSettings } from "@/settings/v2/components/PlusSettings";
 import { checkModelApiKey, formatDateTime } from "@/utils";
 import { isSortStrategy } from "@/utils/recentUsageManager";
-import { Key, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Notice } from "obsidian";
 import React, { useState } from "react";
-import { ApiKeyDialog } from "./ApiKeyDialog";
-
-const ChainType2Label: Record<ChainType, string> = {
-  [ChainType.LLM_CHAIN]: "Chat",
-  [ChainType.VAULT_QA_CHAIN]: "Vault QA (Basic)",
-  [ChainType.COPILOT_PLUS_CHAIN]: "Copilot Plus",
-  [ChainType.PROJECT_CHAIN]: "Projects (alpha)",
-};
 
 export const BasicSettings: React.FC = () => {
   const settings = useSettingsValue();
-  const { setSelectedTab } = useTab();
   const [isChecking, setIsChecking] = useState(false);
   const [conversationNoteName, setConversationNoteName] = useState(
     settings.defaultConversationNoteName || "{$date}_{$time}__{$topic}"
@@ -91,50 +78,10 @@ export const BasicSettings: React.FC = () => {
 
   return (
     <div className="tw-space-y-4">
-      <PlusSettings />
-
       {/* General Section */}
       <section>
         <div className="tw-mb-3 tw-text-xl tw-font-bold">General</div>
         <div className="tw-space-y-4">
-          <div className="tw-space-y-4">
-            {/* API Key Section */}
-            <SettingItem
-              type="custom"
-              title="API Keys"
-              description={
-                <div className="tw-flex tw-items-center tw-gap-1.5">
-                  <span className="tw-leading-none">
-                    Configure API keys for different AI providers
-                  </span>
-                  <HelpTooltip
-                    content={
-                      <div className="tw-flex tw-max-w-96 tw-flex-col tw-gap-2 tw-py-4">
-                        <div className="tw-text-sm tw-font-medium tw-text-accent">
-                          API key required for chat and QA features
-                        </div>
-                        <div className="tw-text-xs tw-text-muted">
-                          To enable chat and QA functionality, please provide an API key from your
-                          selected provider.
-                        </div>
-                      </div>
-                    }
-                  />
-                </div>
-              }
-            >
-              <Button
-                onClick={() => {
-                  new ApiKeyDialog(app, () => setSelectedTab("model")).open();
-                }}
-                variant="secondary"
-                className="tw-flex tw-w-full tw-items-center tw-justify-center tw-gap-2 sm:tw-w-auto sm:tw-justify-start"
-              >
-                Set Keys
-                <Key className="tw-size-4" />
-              </Button>
-            </SettingItem>
-          </div>
           <SettingItem
             type="select"
             title="Default Chat Model"
@@ -175,53 +122,6 @@ export const BasicSettings: React.FC = () => {
                 : [{ label: "Select Model", value: "Select Model" }, ...enableActivatedModels]
             }
             placeholder="Model"
-          />
-
-          {/* Basic Configuration Group */}
-          <SettingItem
-            type="select"
-            title="Default Mode"
-            description={
-              <div className="tw-flex tw-items-center tw-gap-1.5">
-                <span className="tw-leading-none">Select the default chat mode</span>
-                <HelpTooltip
-                  content={
-                    <div className="tw-flex tw-max-w-96 tw-flex-col tw-gap-2">
-                      <ul className="tw-pl-4 tw-text-sm tw-text-muted">
-                        <li>
-                          <strong>Chat:</strong> Regular chat mode for general conversations and
-                          tasks. <i>Free to use with your own API key.</i>
-                        </li>
-                        <li>
-                          <strong>Vault QA (Basic):</strong> Ask questions about your vault content
-                          with semantic search. <i>Free to use with your own API key.</i>
-                        </li>
-                        <li>
-                          <strong>Copilot Plus:</strong> Covers all features of the 2 free modes,
-                          plus advanced paid features including chat context menu, advanced search,
-                          AI agents, and more. Check out{" "}
-                          <a
-                            href={createPlusPageUrl(PLUS_UTM_MEDIUMS.MODE_SELECT_TOOLTIP)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="tw-text-accent hover:tw-text-accent-hover"
-                          >
-                            obsidiancopilot.com
-                          </a>{" "}
-                          for more details.
-                        </li>
-                      </ul>
-                    </div>
-                  }
-                />
-              </div>
-            }
-            value={settings.defaultChainType}
-            onChange={(value) => updateSetting("defaultChainType", value as ChainType)}
-            options={Object.entries(ChainType2Label).map(([key, value]) => ({
-              label: value,
-              value: key,
-            }))}
           />
 
           <SettingItem

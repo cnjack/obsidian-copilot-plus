@@ -36,4 +36,24 @@ export enum PromptSortStrategy {
   MANUAL = "manual",
 }
 
+/**
+ * Reasoning effort levels for OpenAI reasoning models
+ */
+export enum ReasoningEffort {
+  MINIMAL = "minimal",
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+  XHIGH = "xhigh",
+}
+
+/**
+ * Output verbosity levels for GPT-5 models
+ */
+export enum Verbosity {
+  LOW = "low",
+  MEDIUM = "medium",
+  HIGH = "high",
+}
+
 export type ApplyViewResult = "accepted" | "rejected" | "aborted" | "failed";

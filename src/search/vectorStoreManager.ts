@@ -102,11 +102,20 @@ export default class VectorStoreManager {
               continue;
             }
           }
-          new Notice(
-            "Failed to initialize vector store. Please make sure you have a valid API key " +
-              "for your embedding model and restart the plugin."
-          );
-          console.error("Failed to initialize vector store:", error);
+          if (
+            error instanceof CustomError &&
+            error.message.includes("API key is not provided")
+          ) {
+            // Embedding API key not configured yet — silently skip startup init.
+            // The error will surface when the user actually triggers indexing.
+            logWarn("Embedding API key not configured, skipping vector store initialization.");
+          } else {
+            new Notice(
+              "Failed to initialize vector store. Please make sure you have a valid API key " +
+                "for your embedding model and restart the plugin."
+            );
+            console.error("Failed to initialize vector store:", error);
+          }
           break;
         }
       }

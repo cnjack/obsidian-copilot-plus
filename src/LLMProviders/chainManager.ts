@@ -6,14 +6,11 @@ import {
   setChainType,
 } from "@/aiParams";
 import ChainFactory, { ChainType, Document } from "@/chainFactory";
-import { BUILTIN_CHAT_MODELS, DEFAULT_MAX_SOURCE_CHUNKS, USER_SENDER } from "@/constants";
+import { DEFAULT_MAX_SOURCE_CHUNKS, USER_SENDER } from "@/constants";
 import {
   AutonomousAgentChainRunner,
   ChainRunner,
-  CopilotPlusChainRunner,
-  LLMChainRunner,
   ProjectChainRunner,
-  VaultQAChainRunner,
 } from "@/LLMProviders/chainRunner/index";
 import { logError, logInfo } from "@/logger";
 import { getSettings, subscribeToSettingsChange } from "@/settings/model";
@@ -139,8 +136,9 @@ export default class ChainManager {
         if (!customModel) {
           // Reset default model if no model is found
           console.error("Resetting default model. No model configuration found for: ", newModelKey);
-          customModel = BUILTIN_CHAT_MODELS[0];
-          newModelKey = customModel.name + "|" + customModel.provider;
+          throw new Error(
+            "No model configuration found. Please configure a model in settings."
+          );
         }
 
         // Add validation for project mode
@@ -290,15 +288,10 @@ export default class ChainManager {
 
     switch (chainType) {
       case ChainType.LLM_CHAIN:
-        return new LLMChainRunner(this);
       case ChainType.VAULT_QA_CHAIN:
-        return new VaultQAChainRunner(this);
       case ChainType.COPILOT_PLUS_CHAIN:
-        // Use AutonomousAgentChainRunner if the setting is enabled
-        if (settings.enableAutonomousAgent) {
-          return new AutonomousAgentChainRunner(this);
-        }
-        return new CopilotPlusChainRunner(this);
+        // Unified agent mode: all non-project chains use AutonomousAgentChainRunner
+        return new AutonomousAgentChainRunner(this);
       case ChainType.PROJECT_CHAIN:
         return new ProjectChainRunner(this);
       default:

@@ -1,8 +1,6 @@
 import { BREVILABS_API_BASE_URL } from "@/constants";
 import { getDecryptedKey } from "@/encryptionService";
-import { MissingPlusLicenseError } from "@/error";
 import { logInfo } from "@/logger";
-import { turnOffPlus, turnOnPlus } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { safeFetchNoThrow } from "@/utils";
 import { arrayBufferToBase64 } from "@/utils/base64";
@@ -84,14 +82,6 @@ export class BrevilabsClient {
     return BrevilabsClient.instance;
   }
 
-  private checkLicenseKey() {
-    if (!getSettings().plusLicenseKey) {
-      throw new MissingPlusLicenseError(
-        "Copilot Plus license key not found. Please enter your license key in the settings."
-      );
-    }
-  }
-
   setPluginVersion(pluginVersion: string) {
     this.pluginVersion = pluginVersion;
   }
@@ -103,10 +93,7 @@ export class BrevilabsClient {
     excludeAuthHeader = false,
     skipLicenseCheck = false
   ): Promise<{ data: T | null; error?: Error }> {
-    if (!skipLicenseCheck) {
-      this.checkLicenseKey();
-    }
-
+    // License check removed - all features are now available without validation
     body.user_id = getSettings().userId;
 
     const url = new URL(`${BREVILABS_API_BASE_URL}${endpoint}`);
@@ -120,8 +107,12 @@ export class BrevilabsClient {
       "Content-Type": "application/json",
       "X-Client-Version": this.pluginVersion,
     };
+    // Only add Authorization header if license key is provided
     if (!excludeAuthHeader) {
-      headers.Authorization = `Bearer ${await getDecryptedKey(getSettings().plusLicenseKey)}`;
+      const licenseKey = getSettings().plusLicenseKey;
+      if (licenseKey) {
+        headers.Authorization = `Bearer ${await getDecryptedKey(licenseKey)}`;
+      }
     }
     const response = await safeFetchNoThrow(url.toString(), {
       method,
@@ -149,9 +140,7 @@ export class BrevilabsClient {
     formData: FormData,
     skipLicenseCheck = false
   ): Promise<{ data: T | null; error?: Error }> {
-    if (!skipLicenseCheck) {
-      this.checkLicenseKey();
-    }
+    // License check removed - all features are now available without validation
 
     // Add user_id to FormData
     formData.append("user_id", getSettings().userId);
@@ -159,13 +148,18 @@ export class BrevilabsClient {
     const url = new URL(`${BREVILABS_API_BASE_URL}${endpoint}`);
 
     try {
+      const headers: Record<string, string> = {
+        // No Content-Type header - browser will set it automatically with boundary
+        "X-Client-Version": this.pluginVersion,
+      };
+      // Only add Authorization header if license key is provided
+      const licenseKey = getSettings().plusLicenseKey;
+      if (licenseKey) {
+        headers.Authorization = `Bearer ${await getDecryptedKey(licenseKey)}`;
+      }
       const response = await fetch(url.toString(), {
         method: "POST",
-        headers: {
-          // No Content-Type header - browser will set it automatically with boundary
-          Authorization: `Bearer ${await getDecryptedKey(getSettings().plusLicenseKey)}`,
-          "X-Client-Version": this.pluginVersion,
-        },
+        headers,
         body: formData,
       });
 
@@ -188,56 +182,15 @@ export class BrevilabsClient {
   }
 
   /**
-   * Validate the license key and update the isPlusUser setting.
-   * @param context Optional context object containing the features that the user is using to validate the license key.
-   * @returns true if the license key is valid, false if the license key is invalid, and undefined if
-   * unknown error.
+   * Validate the license key.
+   * All features are now available without license validation.
+   * @returns Always returns valid: true
    */
   async validateLicenseKey(
     context?: Record<string, any>
-  ): Promise<{ isValid: boolean | undefined; plan?: string }> {
-    // Build the request body with proper structure
-    const requestBody: Record<string, any> = {
-      license_key: await getDecryptedKey(getSettings().plusLicenseKey),
-    };
-
-    // Safely spread context if provided, ensuring no conflicts with required fields
-    if (context && typeof context === "object") {
-      // Filter out any undefined or null values from context
-      const filteredContext = Object.fromEntries(
-        Object.entries(context).filter(([_, value]) => value !== undefined && value !== null)
-      );
-
-      // Remove any reserved fields that must not be overridden by context
-      const reservedKeys = new Set(["license_key", "user_id"]);
-      for (const key of reservedKeys) {
-        if (key in filteredContext) {
-          delete (filteredContext as Record<string, unknown>)[key];
-        }
-      }
-
-      // Spread the filtered context into the request body
-      Object.assign(requestBody, filteredContext);
-    }
-
-    const { data, error } = await this.makeRequest<LicenseResponse>(
-      "/license",
-      requestBody,
-      "POST",
-      true,
-      true
-    );
-
-    if (error) {
-      if (error.message === "Invalid license key") {
-        turnOffPlus();
-        return { isValid: false };
-      }
-      // Do nothing if the error is not about the invalid license key
-      return { isValid: undefined };
-    }
-    turnOnPlus();
-    return { isValid: true, plan: data?.plan };
+  ): Promise<{ isValid: boolean; plan?: string }> {
+    // All features are now available without license validation
+    return { isValid: true, plan: "free" };
   }
 
   async rerank(query: string, documents: string[]): Promise<RerankResponse> {

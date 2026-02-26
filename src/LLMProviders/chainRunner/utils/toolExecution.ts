@@ -1,5 +1,4 @@
 import { logError, logInfo, logWarn } from "@/logger";
-import { checkIsPlusUser, isSelfHostModeValid } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { ToolManager } from "@/tools/toolManager";
 import { ToolRegistry } from "@/tools/ToolRegistry";
@@ -61,17 +60,7 @@ export async function executeSequentialToolCall(
     const registry = ToolRegistry.getInstance();
     const metadata = registry.getToolMetadata(toolCall.name);
 
-    // Check if tool requires Plus subscription
-    if (metadata?.isPlusOnly) {
-      const isPlusUser = await checkIsPlusUser();
-      if (!isPlusUser && !isSelfHostModeValid()) {
-        return {
-          toolName: toolCall.name,
-          result: `Error: ${getToolDisplayName(toolCall.name)} requires a Copilot Plus subscription`,
-          success: false,
-        };
-      }
-    }
+    // Plus subscription check removed - all tools are now available without license validation
 
     // Prepare tool arguments
     const toolArgs = { ...toolCall.args };

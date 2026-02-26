@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Copilot for Obsidian is an AI-powered assistant plugin that integrates various LLM providers (OpenAI, Anthropic, Google, etc.) with Obsidian. It provides chat interfaces, autocomplete, semantic search, and various AI-powered commands for note-taking and knowledge management.
+Agent Copilot for Obsidian is a personal fork of Copilot for Obsidian. It is an AI-powered assistant plugin that integrates various LLM providers (OpenAI, Anthropic, Google, etc.) with Obsidian. It provides chat interfaces, autocomplete, semantic search, and various AI-powered commands for note-taking and knowledge management.
 
 ## Development Commands
 
@@ -352,3 +352,7 @@ The TODO.md should be:
   - Backwards compatible - loads existing messages from ProjectManager cache
   - Zero configuration required - works automatically
 - Check @tailwind.config.js to understand what tailwind css classnames are available
+
+## Task Master AI Instructions
+**Import Task Master's development workflow commands and guidelines, treat as if import is in the main CLAUDE.md file.**
+@./.taskmaster/CLAUDE.md

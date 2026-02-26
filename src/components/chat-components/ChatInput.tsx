@@ -11,7 +11,6 @@ import { AddImageModal } from "@/components/modals/AddImageModal";
 import { Button } from "@/components/ui/button";
 import { ModelSelector } from "@/components/ui/ModelSelector";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChatToolControls } from "./ChatToolControls";
 import { isPlusChain } from "@/utils";
 import {
   mergeWebTabContexts,
@@ -23,7 +22,7 @@ import { useSettingsValue } from "@/settings/model";
 import { SelectedTextContext, WebTabContext } from "@/types/message";
 import { isAllowedFileForNoteContext } from "@/utils";
 import { CornerDownLeft, Image, Loader2, StopCircle, X } from "lucide-react";
-import { App, Notice, TFile } from "obsidian";
+import { App, TFile } from "obsidian";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { $getSelection, $isRangeSelection } from "lexical";
 import { ContextControl } from "./ContextControl";
@@ -31,7 +30,7 @@ import { $removePillsByPath } from "./pills/NotePillNode";
 import { $removeActiveNotePills } from "./pills/ActiveNotePillNode";
 import { $removePillsByURL } from "./pills/URLPillNode";
 import { $removePillsByFolder } from "./pills/FolderPillNode";
-import { $removePillsByToolName, $createToolPillNode } from "./pills/ToolPillNode";
+import { $createToolPillNode } from "./pills/ToolPillNode";
 import { $removeActiveWebTabPills } from "./pills/ActiveWebTabPillNode";
 import { $findWebTabPills, $removeWebTabPillsByUrl } from "./pills/WebTabPillNode";
 import LexicalEditor from "./LexicalEditor";
@@ -127,7 +126,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const [notesFromPills, setNotesFromPills] = useState<{ path: string; basename: string }[]>([]);
   const [urlsFromPills, setUrlsFromPills] = useState<string[]>([]);
   const [foldersFromPills, setFoldersFromPills] = useState<string[]>([]);
-  const [toolsFromPills, setToolsFromPills] = useState<string[]>([]);
   const [webTabsFromPills, setWebTabsFromPills] = useState<WebTabContext[]>([]);
   const isCopilotPlus = isPlusChain(currentChain);
 
@@ -157,30 +155,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     });
   };
 
-  // Toggle states for vault, web search, composer, and autonomous agent
-  const [vaultToggle, setVaultToggle] = useState(false);
-  const [webToggle, setWebToggle] = useState(false);
-  const [composerToggle, setComposerToggle] = useState(false);
-  const [autonomousAgentToggle, setAutonomousAgentToggle] = useState(
-    settings.enableAutonomousAgent
-  );
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const loadingMessages = [
     "Loading the project context...",
     "Processing context files...",
     "If you have many files in context, this can take a while...",
   ];
-
-  // Sync autonomous agent toggle with settings and chain type
-  useEffect(() => {
-    if (currentChain === ChainType.PROJECT_CHAIN) {
-      // Force off in Projects mode
-      setAutonomousAgentToggle(false);
-    } else {
-      // In other modes, use the actual settings value
-      setAutonomousAgentToggle(settings.enableAutonomousAgent);
-    }
-  }, [settings.enableAutonomousAgent, currentChain]);
 
   useEffect(() => {
     if (currentChain === ChainType.PROJECT_CHAIN) {
@@ -247,27 +227,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
 
-    // Build tool calls based on toggle states
-    const toolCalls: string[] = [];
-    // Only add tool calls when autonomous agent is off
-    // When autonomous agent is on, it handles all tools internally
-    if (!autonomousAgentToggle) {
-      const messageLower = inputMessage.toLowerCase();
-
-      // Only add tools from buttons if they're not already in the message
-      if (vaultToggle && !messageLower.includes("@vault")) {
-        toolCalls.push("@vault");
-      }
-      if (webToggle && !messageLower.includes("@websearch") && !messageLower.includes("@web")) {
-        toolCalls.push("@websearch");
-      }
-      if (composerToggle && !messageLower.includes("@composer")) {
-        toolCalls.push("@composer");
-      }
-    }
-
     handleSendMessage({
-      toolCalls,
+      toolCalls: [],
       contextNotes,
       urls: contextUrls,
       contextFolders,
@@ -300,41 +261,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
       });
     });
   };
-
-  // Handle when tools are removed from pills (when pills are deleted in editor)
-  const handleToolPillsRemoved = (removedTools: string[]) => {
-    if (!isCopilotPlus || autonomousAgentToggle) return;
-
-    // Update tool button states based on removed pills
-    removedTools.forEach((tool) => {
-      switch (tool) {
-        case "@vault":
-          setVaultToggle(false);
-          break;
-        case "@websearch":
-        case "@web":
-          setWebToggle(false);
-          break;
-        case "@composer":
-          setComposerToggle(false);
-          break;
-      }
-    });
-  };
-
-  // Sync tool button states with tool pills
-  useEffect(() => {
-    if (!isCopilotPlus || autonomousAgentToggle) return;
-
-    // Update button states based on current tool pills
-    const hasVault = toolsFromPills.includes("@vault");
-    const hasWeb = toolsFromPills.includes("@websearch") || toolsFromPills.includes("@web");
-    const hasComposer = toolsFromPills.includes("@composer");
-
-    setVaultToggle(hasVault);
-    setWebToggle(hasWeb);
-    setComposerToggle(hasComposer);
-  }, [toolsFromPills, isCopilotPlus, autonomousAgentToggle]);
 
   // Handle when context notes are removed from the context menu
   // This should remove all corresponding pills from the editor
@@ -411,7 +337,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
               selection.insertNodes([toolPill]);
             }
           });
-          // Note: toolsFromPills will be updated automatically via ToolPillSyncPlugin
         }
         break;
       case "folders":
@@ -658,32 +583,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [editMode, onEditCancel]);
 
-  // Handle tool button toggle-off events - remove corresponding pills
-  const handleVaultToggleOff = useCallback(() => {
-    if (lexicalEditorRef.current && isCopilotPlus) {
-      lexicalEditorRef.current.update(() => {
-        $removePillsByToolName("@vault");
-      });
-    }
-  }, [isCopilotPlus]);
-
-  const handleWebToggleOff = useCallback(() => {
-    if (lexicalEditorRef.current && isCopilotPlus) {
-      lexicalEditorRef.current.update(() => {
-        $removePillsByToolName("@websearch");
-        $removePillsByToolName("@web");
-      });
-    }
-  }, [isCopilotPlus]);
-
-  const handleComposerToggleOff = useCallback(() => {
-    if (lexicalEditorRef.current && isCopilotPlus) {
-      lexicalEditorRef.current.update(() => {
-        $removePillsByToolName("@composer");
-      });
-    }
-  }, [isCopilotPlus]);
-
   // Active note pill sync callbacks
   const handleActiveNoteAdded = useCallback(() => {
     setIncludeActiveNote(true);
@@ -703,13 +602,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
     setIncludeActiveWebTab(false);
   }, [setIncludeActiveWebTab]);
 
-  // Handle tag selection from typeahead - auto-enable vault search
+  // Handle tag selection from typeahead - agent handles vault search automatically
   const handleTagSelected = useCallback(() => {
-    if (isCopilotPlus && !autonomousAgentToggle && !vaultToggle) {
-      setVaultToggle(true);
-      new Notice("Vault search enabled for tag query");
-    }
-  }, [isCopilotPlus, autonomousAgentToggle, vaultToggle]);
+    // Autonomous agent is always active and will use vault search when relevant
+  }, []);
 
   return (
     <div
@@ -776,8 +672,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
           onActiveNoteRemoved={handleActiveNoteRemoved}
           onURLsChange={isCopilotPlus ? setUrlsFromPills : undefined}
           onURLsRemoved={isCopilotPlus ? handleURLPillsRemoved : undefined}
-          onToolsChange={isCopilotPlus ? setToolsFromPills : undefined}
-          onToolsRemoved={isCopilotPlus ? handleToolPillsRemoved : undefined}
+          onToolsChange={undefined}
+          onToolsRemoved={undefined}
           onFoldersChange={setFoldersFromPills}
           onFoldersRemoved={handleFolderPillsRemoved}
           onWebTabsChange={setWebTabsFromPills}
@@ -832,20 +728,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
             </Button>
           ) : (
             <>
-              <ChatToolControls
-                vaultToggle={vaultToggle}
-                setVaultToggle={setVaultToggle}
-                webToggle={webToggle}
-                setWebToggle={setWebToggle}
-                composerToggle={composerToggle}
-                setComposerToggle={setComposerToggle}
-                autonomousAgentToggle={autonomousAgentToggle}
-                setAutonomousAgentToggle={setAutonomousAgentToggle}
-                currentChain={currentChain}
-                onVaultToggleOff={handleVaultToggleOff}
-                onWebToggleOff={handleWebToggleOff}
-                onComposerToggleOff={handleComposerToggleOff}
-              />
               <TooltipProvider delayDuration={0}>
                 <Tooltip>
                   <TooltipTrigger asChild>

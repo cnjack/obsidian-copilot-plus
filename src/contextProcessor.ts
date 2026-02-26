@@ -553,16 +553,9 @@ export class ContextProcessor {
           return;
         }
 
-        // 2. Apply chain restrictions only to supported files that are NOT md or canvas
-        if (!isPlusChain(currentChain) && note.extension !== "md" && note.extension !== "canvas") {
-          // This file type is supported, but requires Plus mode (e.g., PDF)
-          logWarn(`File type ${note.extension} requires Copilot Plus mode for context processing.`);
-          // Show user-facing notice about the restriction
-          new Notice(RESTRICTION_MESSAGES.NON_MARKDOWN_FILES_RESTRICTED);
-          return;
-        }
+        // 2. Plus chain check removed - all file types are now available without license validation
 
-        // 3. If we reach here, parse the file (md, canvas, or other supported type in Plus mode)
+        // 3. If we reach here, parse the file
         const content =
           note.extension === "md"
             ? await this.buildMarkdownContextContent(note, vault, fileParserManager, currentChain)

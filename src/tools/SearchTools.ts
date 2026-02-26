@@ -1,19 +1,15 @@
-import { getStandaloneQuestion } from "@/chainUtils";
 import { DEFAULT_MAX_SOURCE_CHUNKS, TEXT_WEIGHT } from "@/constants";
-import { BrevilabsClient } from "@/LLMProviders/brevilabsClient";
-import { hasSelfHostSearchKey, selfHostWebSearch } from "@/LLMProviders/selfHostServices";
 import { logInfo } from "@/logger";
-import { isSelfHostModeValid } from "@/plusUtils";
 import { RetrieverFactory } from "@/search/RetrieverFactory";
 import { getSettings } from "@/settings/model";
 import { z } from "zod";
 import { deduplicateSources } from "@/LLMProviders/chainRunner/utils/toolExecution";
 import { createLangChainTool } from "./createLangChainTool";
 import { RETURN_ALL_LIMIT } from "@/search/v3/SearchCore";
-import { getWebSearchCitationInstructions } from "@/LLMProviders/chainRunner/utils/citationUtils";
 import { TieredLexicalRetriever } from "@/search/v3/TieredLexicalRetriever";
 import { FilterRetriever } from "@/search/v3/FilterRetriever";
 import { mergeFilterAndSearchResults } from "@/search/v3/mergeResults";
+import type { UrlRefContextItem } from "@/context/ContextItem";
 
 /**
  * Query expansion data returned with search results.
@@ -528,63 +524,202 @@ const indexTool = createLangChainTool({
   },
 });
 
-// Define Zod schema for webSearch
-const webSearchSchema = z.object({
-  query: z.string().min(1).describe("The search query to search the internet"),
-  chatHistory: z
-    .array(
-      z.object({
-        role: z.enum(["user", "assistant"]),
-        content: z.string(),
-      })
-    )
-    .describe("Previous conversation turns for context (usually empty array)"),
+
+// ============================================================================
+// Vault Search Tool (ContextItem-based)
+// ============================================================================
+
+import { v4 as uuidv4 } from "uuid";
+import type { VaultSearchResultContextItem } from "@/context/ContextItem";
+
+/**
+ * Zod schema for vaultSearch tool
+ * Simplified interface with explicit tags parameter
+ */
+const vaultSearchSchema = z.object({
+  query: z.string().min(1).describe("The search query to find relevant notes in the vault"),
+  timeRange: z
+    .object({
+      startTime: z.number().optional().describe("Start time as epoch milliseconds"),
+      endTime: z.number().optional().describe("End time as epoch milliseconds"),
+    })
+    .optional()
+    .describe("Optional time range filter for note creation/modification dates"),
+  tags: z
+    .array(z.string())
+    .optional()
+    .describe("Optional list of tags to filter results (include # prefix, e.g., ['#project', '#todo'])"),
+  returnAll: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set to true to return ALL matching notes (up to 100). " +
+        "Use for 'find all', 'list every', 'show me all' type queries. " +
+        "Default is false which returns top ~30 results."
+    ),
 });
 
-// Add new web search tool
-const webSearchTool = createLangChainTool({
-  name: "webSearch",
+/**
+ * Convert search result documents to VaultSearchResultContextItem format
+ */
+function convertToVaultSearchContextItems(
+  documents: Array<{
+    title: string;
+    content: string;
+    path: string;
+    score: number;
+    explanation?: string | null;
+    section?: string;
+  }>
+): VaultSearchResultContextItem[] {
+  return documents.map((doc) => ({
+    id: uuidv4(),
+    type: "vault_search_result",
+    title: doc.title,
+    source: "vault",
+    path: doc.path,
+    content: doc.content,
+    score: doc.score,
+    explanation: doc.explanation || undefined,
+    section: doc.section,
+  }));
+}
+
+/**
+ * Vault search tool that returns results as ContextItem objects
+ * This is a wrapper around the existing search infrastructure with a simpler interface
+ */
+const vaultSearchTool = createLangChainTool({
+  name: "vaultSearch",
   description:
-    "Search the INTERNET (NOT vault notes) when user explicitly asks for web/online information",
-  schema: webSearchSchema,
-  func: async ({ query, chatHistory }) => {
-    try {
-      // Get standalone question considering chat history
-      const standaloneQuestion = await getStandaloneQuestion(query, chatHistory);
+    "Search for notes in the Obsidian vault. Returns structured context items with note content.",
+  schema: vaultSearchSchema,
+  func: async ({ query, timeRange, tags, returnAll }) => {
+    // Validate time range
+    const validatedTimeRange = validateTimeRange(timeRange);
 
-      let webContent: string;
-      let citations: string[];
+    // Combine query and tags for salient terms
+    const tagTerms = tags || [];
+    const baseSalientTerms = query
+      .split(/\s+/)
+      .filter((term) => term.length > 1 && !["the", "a", "an", "is", "are", "was", "were"].includes(term.toLowerCase()));
 
-      if (isSelfHostModeValid() && hasSelfHostSearchKey()) {
-        const result = await selfHostWebSearch(standaloneQuestion);
-        webContent = result.content;
-        citations = result.citations;
-      } else {
-        const response = await BrevilabsClient.getInstance().webSearch(standaloneQuestion);
-        webContent = response.response.choices[0].message.content;
-        citations = response.response.citations || [];
-      }
+    // Combine tags and query terms
+    const allSalientTerms = [...new Set([...tagTerms, ...baseSalientTerms])];
 
-      // Return structured JSON response for consistency with other tools
-      // Format as an array of results like localSearch does
-      const formattedResults = [
-        {
-          type: "web_search",
-          content: webContent,
-          citations: citations,
-          // Instruct the model to use footnote-style citations and definitions.
-          // Chat UI will render [^n] as [n] for readability and show a simple numbered Sources list.
-          // When inserted into a note, the original [^n] footnotes will remain valid Markdown footnotes.
-          instruction: getWebSearchCitationInstructions(),
-        },
-      ];
+    // Use the existing performLexicalSearch function
+    const result = await performLexicalSearch({
+      timeRange: validatedTimeRange,
+      query,
+      salientTerms: allSalientTerms,
+      returnAll: returnAll === true,
+    });
 
-      return formattedResults;
-    } catch (error) {
-      console.error(`Error processing web search query ${query}:`, error);
-      return { error: `Web search failed: ${error}` };
-    }
+    // Convert documents to ContextItem format
+    const contextItems = convertToVaultSearchContextItems(
+      (result.documents || []).map((doc: any) => ({
+        title: doc.title,
+        content: doc.content,
+        path: doc.path,
+        score: doc.score || doc.rerank_score || 0,
+        explanation: doc.explanation,
+        section: doc.section,
+      }))
+    );
+
+    logInfo(`vaultSearch returned ${contextItems.length} ContextItem results for query: "${query}"`);
+
+    // Return as structured JSON with context items
+    return {
+      type: "vault_search",
+      query,
+      itemCount: contextItems.length,
+      items: contextItems,
+    };
   },
 });
 
-export { indexTool, lexicalSearchTool, localSearchTool, semanticSearchTool, webSearchTool };
+export {
+  indexTool,
+  lexicalSearchTool,
+  localSearchTool,
+  semanticSearchTool,
+  vaultSearchTool,
+  webFetchTool,
+};
+
+// ============================================================================
+// Web Fetch Tool
+// ============================================================================
+
+import { Mention } from "@/mentions/Mention";
+
+/**
+ * Zod schema for webFetch tool
+ */
+const webFetchSchema = z.object({
+  url: z.string().url().describe("The URL to fetch and parse content from"),
+});
+
+/**
+ * Web fetch tool that fetches and parses a specific URL
+ * Returns content as a UrlRefContextItem
+ */
+const webFetchTool = createLangChainTool({
+  name: "webFetch",
+  description:
+    "Fetch and parse the main content from a specific URL. Use this when the user provides a direct URL to read.",
+  schema: webFetchSchema,
+  func: async ({ url }) => {
+    try {
+      const mention = Mention.getInstance();
+      const result = await mention.processUrl(url);
+
+      if (result.error) {
+        logInfo(`webFetch error for ${url}: ${result.error}`);
+        return {
+          type: "web_fetch_error",
+          url,
+          error: result.error,
+        };
+      }
+
+      // Extract domain from URL
+      let domain: string;
+      try {
+        domain = new URL(url).hostname;
+      } catch {
+        domain = "unknown";
+      }
+
+      // Create UrlRefContextItem from the fetched content
+      const contextItem: UrlRefContextItem = {
+        id: uuidv4(),
+        type: "url_ref",
+        title: domain,
+        source: "web",
+        url,
+        content: result.response,
+        metadata: {
+          domain,
+          fetchedAt: Date.now(),
+        },
+      };
+
+      logInfo(`webFetch returned ${result.response.length} chars for URL: ${url}`);
+
+      return {
+        type: "web_fetch",
+        url,
+        item: contextItem,
+      };
+    } catch (error: any) {
+      logInfo(`webFetch exception for ${url}: ${error.message}`);
+      return {
+        type: "web_fetch_error",
+        url,
+        error: error.message || "Failed to fetch URL",
+      };
+    }
+  },
+});

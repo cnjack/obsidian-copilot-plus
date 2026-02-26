@@ -1,7 +1,6 @@
 import { AVAILABLE_TOOLS } from "@/components/chat-components/constants/tools";
 import {
   ABORT_REASON,
-  COMPOSER_OUTPUT_INSTRUCTIONS,
   LOADING_MESSAGES,
   MAX_CHARS_FOR_LOCAL_SEARCH_CONTEXT,
   ModelCapability,
@@ -14,7 +13,6 @@ import {
   MessageContent,
 } from "@/imageProcessing/imageProcessor";
 import { logInfo, logWarn } from "@/logger";
-import { checkIsPlusUser } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { getSystemPromptWithMemory } from "@/system-prompts/systemPromptBuilder";
 import { writeToFileTool } from "@/tools/ComposerTools";
@@ -22,7 +20,7 @@ import { ToolManager } from "@/tools/toolManager";
 import { ToolResultFormatter } from "@/tools/ToolResultFormatter";
 import { ToolRegistry } from "@/tools/ToolRegistry";
 import { initializeBuiltinTools } from "@/tools/builtinTools";
-import { localSearchTool, webSearchTool } from "@/tools/SearchTools";
+import { localSearchTool } from "@/tools/SearchTools";
 import { updateMemoryTool } from "@/tools/memoryTools";
 import { extractChatHistory } from "@/utils";
 import { ChatMessage, ResponseMetadata } from "@/types/message";
@@ -255,24 +253,6 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
             salientTerms: context.salientTerms,
             timeRange: context.timeRange,
             returnAll: context.returnAll === true ? true : undefined,
-          },
-        });
-      }
-    }
-
-    // Handle @websearch command and also support @web for backward compatibility
-    if (message.includes("@websearch") || message.includes("@web")) {
-      const hasWebSearch = toolCalls.some((tc) => tc.tool.name === "webSearch");
-      if (!hasWebSearch) {
-        const memory = ProjectManager.instance.getCurrentChainManager().memoryManager.getMemory();
-        const memoryVariables = await memory.loadMemoryVariables({});
-        const chatHistory = extractChatHistory(memoryVariables);
-
-        toolCalls.push({
-          tool: webSearchTool,
-          args: {
-            query: cleanQuery,
-            chatHistory,
           },
         });
       }
@@ -545,18 +525,6 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
     return this.hasCapability(model, ModelCapability.VISION);
   }
 
-  /**
-   * If userMessage.message contains '@composer', append COMPOSER_OUTPUT_INSTRUCTIONS to the text content.
-   * Handles both string and MessageContent[] types.
-   */
-  private appendComposerInstructionsIfNeeded(content: string, userMessage: ChatMessage): string {
-    if (!userMessage.message || !userMessage.message.includes("@composer")) {
-      return content;
-    }
-    const composerPrompt = `<OUTPUT_FORMAT>\n${COMPOSER_OUTPUT_INSTRUCTIONS}\n</OUTPUT_FORMAT>`;
-    return `${content}\n\n${composerPrompt}`;
-  }
-
   private async streamMultimodalResponse(
     textContent: string,
     userMessage: ChatMessage,
@@ -648,18 +616,6 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
         finalUserContent = ensureUserQueryLabel(userMessageContent.content);
       }
 
-      // Add composer instructions if textContent has them
-      // (textContent already has composer instructions appended via appendComposerInstructionsIfNeeded)
-      if (
-        textContent.includes("<OUTPUT_FORMAT>") &&
-        !finalUserContent.includes("<OUTPUT_FORMAT>")
-      ) {
-        const composerMatch = textContent.match(/<OUTPUT_FORMAT>[\s\S]*?<\/OUTPUT_FORMAT>/);
-        if (composerMatch) {
-          finalUserContent += "\n\n" + composerMatch[0];
-        }
-      }
-
       // Build message content with text and images for multimodal models
       const content: string | MessageContent[] = isMultimodalCurrent
         ? await this.buildMessageContent(finalUserContent, userMessage)
@@ -725,25 +681,7 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
     const thinkStreamer = new ThinkBlockStreamer(updateCurrentAiMessage, excludeThinking);
     let sources: { title: string; path: string; score: number; explanation?: any }[] = [];
 
-    const isPlusUser = await checkIsPlusUser({
-      isCopilotPlus: true,
-    });
-    if (!isPlusUser) {
-      await this.handleError(
-        new Error("Invalid license key"),
-        thinkStreamer.processErrorChunk.bind(thinkStreamer)
-      );
-      const errorResponse = thinkStreamer.close().content;
-
-      return this.handleResponse(
-        errorResponse,
-        userMessage,
-        abortController,
-        addMessage,
-        updateCurrentAiMessage,
-        undefined // no sources
-      );
-    }
+    // Note: Plus license validation removed - all features are now available without license validation
 
     try {
       logInfo("==== Step 1: Planning tools ====");
@@ -854,16 +792,9 @@ Otherwise omit RETURN_ALL or output: [RETURN_ALL: false]`;
       // They all go to the user message with consistent formatting
       const allToolOutputs = toolOutputs.filter((output) => output.output != null);
 
-      // Prepare textContent with composer instructions if needed
-      // This is checked in streamMultimodalResponse to append to final user content
-      const textContentWithComposer = this.appendComposerInstructionsIfNeeded(
-        cleanedUserMessage,
-        userMessage
-      );
-
       logInfo("Invoking LLM with envelope-based context construction");
       await this.streamMultimodalResponse(
-        textContentWithComposer,
+        cleanedUserMessage,
         userMessage,
         allToolOutputs,
         abortController,

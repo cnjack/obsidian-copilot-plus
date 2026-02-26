@@ -8,7 +8,6 @@ import {
 } from "@/constants";
 import { getDecryptedKey } from "@/encryptionService";
 import { logError, logInfo } from "@/logger";
-import { isPlusEnabled } from "@/plusUtils";
 import {
   CopilotSettings,
   getModelKeyFromModel,
@@ -571,7 +570,7 @@ export default class ChatModelManager {
     ChatModelManager.modelMap = {};
     const modelMap = ChatModelManager.modelMap;
 
-    const allModels = activeModels ?? BUILTIN_CHAT_MODELS;
+    const allModels = activeModels ?? [];
 
     allModels.forEach((model) => {
       if (model.enabled) {
@@ -643,10 +642,7 @@ export default class ChatModelManager {
       return false;
     }
 
-    // Check Copilot Plus entitlement requirements (bypassed in self-host mode)
-    if (model.plusExclusive && !isPlusEnabled()) {
-      return false;
-    }
+    // Plus exclusive check removed - all models are now available without license validation
 
     return true;
   }

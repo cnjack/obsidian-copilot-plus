@@ -1,6 +1,5 @@
 import { CustomModel } from "@/aiParams";
 import { SettingItem } from "@/components/ui/setting-item";
-import { BUILTIN_CHAT_MODELS, BUILTIN_EMBEDDING_MODELS } from "@/constants";
 import EmbeddingManager from "@/LLMProviders/embeddingManager";
 import ProjectManager from "@/LLMProviders/projectManager";
 import { logError } from "@/logger";
@@ -115,8 +114,8 @@ export const ModelSettings: React.FC = () => {
     // Get all custom models (non-built-in models)
     const customModels = settings.activeModels.filter((model) => !model.isBuiltIn);
 
-    // Create a new array with built-in models and custom models
-    const updatedModels = [...BUILTIN_CHAT_MODELS, ...customModels];
+    // No built-in models to add back anymore
+    const updatedModels = [...customModels];
 
     // Update the settings
     updateSetting("activeModels", updatedModels);
@@ -127,8 +126,8 @@ export const ModelSettings: React.FC = () => {
     // Get all custom models (non-built-in models)
     const customModels = settings.activeEmbeddingModels.filter((model) => !model.isBuiltIn);
 
-    // Create a new array with built-in models and custom models
-    const updatedModels = [...BUILTIN_EMBEDDING_MODELS, ...customModels];
+    // No built-in models to add back anymore
+    const updatedModels = [...customModels];
 
     // Update the settings
     updateSetting("activeEmbeddingModels", updatedModels);
