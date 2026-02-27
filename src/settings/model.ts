@@ -401,6 +401,12 @@ export function sanitizeSettings(settings: CopilotSettings | undefined): Copilot
     ? DEFAULT_SETTINGS.embeddingBatchSize
     : embeddingBatchSize;
 
+  // Migration: unify old chain types (vault_qa, copilot_plus) to the new AGENT_CHAIN ("agent")
+  const legacyAgentChains = new Set(["vault_qa", "copilot_plus"]);
+  if (legacyAgentChains.has(sanitizedSettings.defaultChainType as string)) {
+    sanitizedSettings.defaultChainType = "agent" as ChainType;
+  }
+
   // Sanitize lexicalSearchRamLimit (20-1000 MB range)
   const lexicalSearchRamLimit = Number(settingsToSanitize.lexicalSearchRamLimit);
   if (isNaN(lexicalSearchRamLimit)) {

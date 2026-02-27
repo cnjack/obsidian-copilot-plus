@@ -209,48 +209,8 @@ export default class ChainManager {
         break;
       }
 
-      case ChainType.VAULT_QA_CHAIN: {
-        // TODO: VaultQAChainRunner now handles this directly without chains
-        await this.initializeQAChain(options);
-
-        // Create retriever based on semantic search setting
-        const settings = getSettings();
-        const retriever = settings.enableSemanticSearchV3
-          ? new (await import("@/search/hybridRetriever")).HybridRetriever({
-              minSimilarityScore: 0.01,
-              maxK: DEFAULT_MAX_SOURCE_CHUNKS,
-              salientTerms: [],
-            })
-          : new (await import("@/search/v3/TieredLexicalRetriever")).TieredLexicalRetriever(app, {
-              minSimilarityScore: 0.01,
-              maxK: DEFAULT_MAX_SOURCE_CHUNKS,
-              salientTerms: [],
-              textWeight: undefined,
-              returnAll: false,
-              useRerankerThreshold: undefined,
-            });
-
-        // Create new conversational retrieval chain
-        this.retrievalChain = ChainFactory.createConversationalRetrievalChain(
-          {
-            llm: chatModel,
-            retriever: retriever,
-            systemMessage: getSystemPrompt(),
-          },
-          this.storeRetrieverDocuments.bind(this),
-          getSettings().debug
-        );
-
-        setChainType(ChainType.VAULT_QA_CHAIN);
-        if (getSettings().debug) {
-          console.log("New Vault QA chain with hybrid retriever created for entire vault");
-          console.log("Set chain:", ChainType.VAULT_QA_CHAIN);
-        }
-        break;
-      }
-
-      case ChainType.COPILOT_PLUS_CHAIN: {
-        // For initial load of the plugin
+      case ChainType.AGENT_CHAIN: {
+        // Unified agent mode: handles vault QA, plus features, and standard chat
         await this.initializeQAChain(options);
         this.chain = ChainFactory.createNewLLMChain({
           llm: chatModel,
@@ -259,7 +219,7 @@ export default class ChainManager {
           abortController: options.abortController,
         }) as RunnableSequence;
 
-        setChainType(ChainType.COPILOT_PLUS_CHAIN);
+        setChainType(ChainType.AGENT_CHAIN);
         break;
       }
 
@@ -288,8 +248,7 @@ export default class ChainManager {
 
     switch (chainType) {
       case ChainType.LLM_CHAIN:
-      case ChainType.VAULT_QA_CHAIN:
-      case ChainType.COPILOT_PLUS_CHAIN:
+      case ChainType.AGENT_CHAIN:
         // Unified agent mode: all non-project chains use AutonomousAgentChainRunner
         return new AutonomousAgentChainRunner(this);
       case ChainType.PROJECT_CHAIN:

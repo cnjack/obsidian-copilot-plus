@@ -255,10 +255,11 @@ export const stringToChainType = (chain: string): ChainType => {
   switch (chain) {
     case "llm_chain":
       return ChainType.LLM_CHAIN;
+    // Backward compat: old stored values map to AGENT_CHAIN
     case "vault_qa":
-      return ChainType.VAULT_QA_CHAIN;
     case "copilot_plus":
-      return ChainType.COPILOT_PLUS_CHAIN;
+    case "agent":
+      return ChainType.AGENT_CHAIN;
     default:
       throw new Error(`Unknown chain type: ${chain}`);
   }

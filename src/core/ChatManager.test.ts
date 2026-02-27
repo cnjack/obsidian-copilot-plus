@@ -15,7 +15,7 @@ jest.mock("@/chatUtils", () => ({
 jest.mock("@/chainFactory", () => ({
   ChainType: {
     LLM_CHAIN: "llm_chain",
-    COPILOT_PLUS_CHAIN: "copilot_plus_chain",
+    AGENT_CHAIN: "agent",
     PROJECT_CHAIN: "project_chain",
   },
 }));
@@ -28,7 +28,7 @@ jest.mock("./ChatPersistenceManager", () => ({
 
 jest.mock("@/aiParams", () => ({
   getCurrentProject: jest.fn().mockReturnValue(null),
-  getChainType: jest.fn().mockReturnValue("copilot_plus_chain"),
+  getChainType: jest.fn().mockReturnValue("agent"),
 }));
 
 jest.mock("@/LLMProviders/projectManager", () => {
@@ -393,7 +393,7 @@ describe("ChatManager", () => {
         expect.anything(), // messageRepo
         expect.anything(), // fileParserManager
         undefined, // vault (undefined in mock)
-        "copilot_plus_chain", // chainType
+        "agent", // chainType
         false, // includeActiveNote
         undefined, // activeNote
         "Test system prompt", // systemPrompt

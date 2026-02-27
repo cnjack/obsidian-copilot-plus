@@ -1,8 +1,8 @@
 jest.mock("@/chainFactory", () => ({
   ChainType: {
     LLM_CHAIN: "llm_chain",
-    COPILOT_PLUS_CHAIN: "copilot_plus",
-    PROJECT_CHAIN: "project_chain",
+    AGENT_CHAIN: "agent",
+    PROJECT_CHAIN: "project",
   },
 }));
 

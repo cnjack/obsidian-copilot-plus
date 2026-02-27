@@ -39,22 +39,13 @@ const SUGGESTED_PROMPTS: Record<string, NotePrompt> = {
       `If a lead ball and a feather are dropped simultaneously from the same height, which will reach the ground first?`,
     ],
   },
-  qaVault: {
-    title: "Vault Q&A",
-    prompts: [
-      `What insights can I gather about <topic> from my notes?`,
-      `Explain <concept> based on my stored notes.`,
-      `Highlight important details on <topic> from my notes.`,
-      `Based on my notes on <topic>, what is the question that I should be asking, but am not?`,
-    ],
-  },
-  copilotPlus: {
-    title: "Copilot Plus",
+  agent: {
+    title: "Agent",
     prompts: [
       `Give me a recap of last week @vault`,
       `What are the key takeaways from my notes on <topic> @vault`,
+      `What insights can I gather about <topic> from my notes?`,
       `Summarize <url> in under 10 bullet points`,
-      `Summarize <youtube_video_url>`,
       `@websearch what are most recent updates in the AI industry`,
       `What are the key insights from this paper <arxiv_url>`,
       `What new methods are proposed in this paper [[<note_with_embedded_pdf>]]`,
@@ -64,9 +55,8 @@ const SUGGESTED_PROMPTS: Record<string, NotePrompt> = {
 
 const PROMPT_KEYS: Record<ChainType, Array<keyof typeof SUGGESTED_PROMPTS>> = {
   [ChainType.LLM_CHAIN]: ["activeNote", "quoteNote", "fun"],
-  [ChainType.VAULT_QA_CHAIN]: ["qaVault", "qaVault", "quoteNote"],
-  [ChainType.COPILOT_PLUS_CHAIN]: ["copilotPlus", "copilotPlus", "copilotPlus"],
-  [ChainType.PROJECT_CHAIN]: ["copilotPlus", "copilotPlus", "copilotPlus"],
+  [ChainType.AGENT_CHAIN]: ["agent", "agent", "agent"],
+  [ChainType.PROJECT_CHAIN]: ["agent", "agent", "agent"],
 };
 
 function getRandomPrompt(chainType: ChainType = ChainType.LLM_CHAIN) {
@@ -133,13 +123,7 @@ export const SuggestedPrompts: React.FC<SuggestedPromptsProps> = ({ onClick }) =
           </div>
         </CardContent>
       </Card>
-      {chainType === ChainType.VAULT_QA_CHAIN && (
-        <div className="tw-rounded-md tw-border tw-border-solid tw-border-border tw-p-2 tw-text-sm">
-          Please note that this is a retrieval-based QA. Questions should contain keywords and
-          concepts that exist literally in your vault
-        </div>
-      )}
-      {chainType === ChainType.VAULT_QA_CHAIN &&
+      {chainType === ChainType.AGENT_CHAIN &&
         indexVaultToVectorStore === VAULT_VECTOR_STORE_STRATEGY.NEVER && (
           <div className="tw-rounded-md tw-border tw-border-solid tw-border-border tw-p-2 tw-text-sm">
             <div>

@@ -967,9 +967,9 @@ const ChatInternal: React.FC<ChatProps & { chatInput: ReturnType<typeof useChatI
                     setSelectedChain(previousMode);
                     setPreviousMode(null);
                   } else {
-                    // default back to chat or plus mode
+                    // default back to agent mode
                     setSelectedChain(
-                      isPlusUser ? ChainType.COPILOT_PLUS_CHAIN : ChainType.LLM_CHAIN
+                      isPlusUser ? ChainType.AGENT_CHAIN : ChainType.LLM_CHAIN
                     );
                   }
                 }}
