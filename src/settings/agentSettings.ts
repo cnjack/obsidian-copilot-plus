@@ -496,9 +496,12 @@ export function migrateToAgentSettings(legacySettings: CopilotSettings): AgentSe
 
       // Service providers
       brevilabs: { apiKey: legacySettings.plusLicenseKey || "" }, // Migrate Plus key
-      firecrawl: { apiKey: legacySettings.firecrawlApiKey || "" },
-      perplexity: { apiKey: legacySettings.perplexityApiKey || "" },
-      supadata: { apiKey: legacySettings.supadataApiKey || "" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      firecrawl: { apiKey: (legacySettings as any).firecrawlApiKey || "" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      perplexity: { apiKey: (legacySettings as any).perplexityApiKey || "" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supadata: { apiKey: (legacySettings as any).supadataApiKey || "" },
       miyo: {
         apiKey: legacySettings.selfHostApiKey || "",
         endpoint: legacySettings.selfHostUrl || "",
@@ -599,6 +602,7 @@ export function migrateToAgentSettings(legacySettings: CopilotSettings): AgentSe
         huggingfaceApiKey: legacySettings.huggingfaceApiKey,
         userSystemPrompt: legacySettings.userSystemPrompt, // deprecated
         inlineEditCommands: legacySettings.inlineEditCommands, // deprecated
+        mcpServersConfig: legacySettings.mcpServersConfig, // preserve for round-trip
       },
     },
   };
@@ -694,9 +698,8 @@ export function migrateFromAgentSettings(newSettings: AgentSettings): CopilotSet
     selfHostUrl: newSettings.retrieval.selfHostUrl || "",
     selfHostApiKey: newSettings.retrieval.selfHostApiKey || "",
     selfHostSearchProvider: newSettings.retrieval.selfHostSearchProvider,
-    firecrawlApiKey: newSettings.providers.firecrawl?.apiKey || "",
-    perplexityApiKey: newSettings.providers.perplexity?.apiKey || "",
-    supadataApiKey: newSettings.providers.supadata?.apiKey || "",
+    // Note: firecrawlApiKey, perplexityApiKey, supadataApiKey removed from CopilotSettings,
+    // now stored in providers.firecrawl/perplexity/supadata.apiKey in AgentSettings.
     enableLexicalBoosts: newSettings.retrieval.enableLexicalBoosts,
     lexicalSearchRamLimit: newSettings.retrieval.lexicalSearchRamLimit,
     suggestedDefaultCommands: false, // No direct mapping
@@ -719,5 +722,6 @@ export function migrateFromAgentSettings(newSettings: AgentSettings): CopilotSet
     autoCompactThreshold: 128000, // Default value, no direct mapping
     convertedDocOutputFolder: newSettings.conversation.convertedDocOutputFolder,
     lastDismissedVersion: newSettings.advanced.lastDismissedVersion,
+    mcpServersConfig: newSettings.advanced._legacy?.mcpServersConfig as string || "",
   };
 }
