@@ -769,9 +769,10 @@ export class ChatManager {
 
   /**
    * Save current chat history
+   * @param skipTopicGeneration - When true, skips AI title generation for intermediate saves
    */
-  async saveChat(modelKey: string): Promise<void> {
-    await this.persistenceManager.saveChat(modelKey);
+  async saveChat(modelKey: string, skipTopicGeneration = false): Promise<void> {
+    await this.persistenceManager.saveChat(modelKey, skipTopicGeneration);
   }
 
   /**

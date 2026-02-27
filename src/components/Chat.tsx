@@ -345,9 +345,10 @@ const ChatInternal: React.FC<ChatProps & { chatInput: ReturnType<typeof useChatI
         updateUserMessageHistory(inputMessage);
       }
 
-      // Autosave if enabled
+      // Autosave if enabled — skip topic generation here since the AI response
+      // hasn't been received yet; the save after getAIResponse() will generate the title.
       if (settings.autosaveChat) {
-        handleSaveAsNote();
+        handleSaveAsNote(true);
       }
 
       // Get the LLM message for AI processing
@@ -377,7 +378,7 @@ const ChatInternal: React.FC<ChatProps & { chatInput: ReturnType<typeof useChatI
     }
   };
 
-  const handleSaveAsNote = useCallback(async () => {
+  const handleSaveAsNote = useCallback(async (skipTopicGeneration = false) => {
     if (!app) {
       logError("App instance is not available.");
       return;
@@ -385,7 +386,7 @@ const ChatInternal: React.FC<ChatProps & { chatInput: ReturnType<typeof useChatI
 
     try {
       // Use the new ChatManager persistence functionality
-      await chatUIState.saveChat(currentModelKey);
+      await chatUIState.saveChat(currentModelKey, skipTopicGeneration);
     } catch (error) {
       logError("Error saving chat as note:", err2String(error));
       new Notice("Failed to save chat as note. Check console for details.");

@@ -49,8 +49,9 @@ export class ChatPersistenceManager {
 
   /**
    * Save current chat history to a markdown file
+   * @param skipTopicGeneration - When true, skips AI title generation (e.g. for intermediate saves before the AI response is available)
    */
-  async saveChat(modelKey: string): Promise<void> {
+  async saveChat(modelKey: string, skipTopicGeneration = false): Promise<void> {
     try {
       const messages = this.messageRepo.getDisplayMessages();
       if (messages.length === 0) {
@@ -212,7 +213,7 @@ export class ChatPersistenceManager {
         }
       }
 
-      this.generateTopicAsyncIfNeeded(messages, targetFile, existingTopic);
+      this.generateTopicAsyncIfNeeded(messages, targetFile, existingTopic, skipTopicGeneration);
     } catch (error) {
       logError("[ChatPersistenceManager] Error saving chat:", error);
       new Notice("Failed to save chat as note. Check console for details.");
@@ -741,11 +742,12 @@ ${chatContent}`;
   private generateTopicAsyncIfNeeded(
     messages: ChatMessage[],
     file: TFile | null,
-    existingTopic?: string
+    existingTopic?: string,
+    skip = false
   ): void {
     const settings = getSettings();
 
-    if (!settings.generateAIChatTitleOnSave || !file || existingTopic) {
+    if (skip || !settings.generateAIChatTitleOnSave || !file || existingTopic) {
       return;
     }
 
