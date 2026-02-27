@@ -1,7 +1,6 @@
 import { CustomModel, getModelKey, ModelConfig } from "@/aiParams";
 import {
   BREVILABS_MODELS_BASE_URL,
-  BUILTIN_CHAT_MODELS,
   ChatModelProviders,
   ModelCapability,
   ProviderInfo,

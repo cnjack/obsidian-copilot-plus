@@ -93,7 +93,7 @@ describe("readNoteTool", () => {
     expect(result.content).toBe(lines.slice(200).join("\n"));
   });
 
-  it("accepts chunkIndex provided as a string", async () => {
+  it("accepts chunkIndex provided as a number", async () => {
     const notePath = "Notes/string-index.md";
     const file = new MockTFile(notePath);
     getAbstractFileByPathMock.mockReturnValue(file);
@@ -101,7 +101,7 @@ describe("readNoteTool", () => {
     const lines = Array.from({ length: 205 }, (_, i) => `Line ${i + 1}`);
     mockCachedRead.mockResolvedValue(lines.join("\n"));
 
-    const result = await invokeReadNoteTool(readNoteTool, { notePath, chunkIndex: "1" as any });
+    const result = await invokeReadNoteTool(readNoteTool, { notePath, chunkIndex: 1 });
 
     expect(result.chunkIndex).toBe(1);
     expect(result.content).toBe(lines.slice(200).join("\n"));

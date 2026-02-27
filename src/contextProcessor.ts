@@ -1,6 +1,6 @@
 import { getSelectedTextContexts } from "@/aiParams";
 import { ChainType } from "@/chainFactory";
-import { RESTRICTION_MESSAGES } from "@/constants";
+
 import { logWarn, logInfo, logError } from "@/logger";
 import { escapeXml } from "@/LLMProviders/chainRunner/utils/xmlParsing";
 import { getWebViewerService } from "@/services/webViewerService/webViewerServiceSingleton";
@@ -8,7 +8,7 @@ import { WebViewerTimeoutError } from "@/services/webViewerService/webViewerServ
 import { FileParserManager } from "@/tools/FileParserManager";
 import { isPlusChain } from "@/utils";
 import { normalizeUrlString } from "@/utils/urlNormalization";
-import { TFile, Vault, Notice } from "obsidian";
+import { TFile, Vault } from "obsidian";
 import {
   NOTE_CONTEXT_PROMPT_TAG,
   EMBEDDED_PDF_TAG,

@@ -13,7 +13,6 @@
  */
 
 import {
-  ABORT_REASON,
   AGENT_LOOP_TIMEOUT_MS,
   DEFAULT_MAX_SOURCE_CHUNKS,
   ModelCapability,
@@ -21,10 +20,9 @@ import {
 } from "@/constants";
 import { MessageContent } from "@/imageProcessing/imageProcessor";
 import { logError, logInfo, logWarn } from "@/logger";
-import { checkIsPlusUser } from "@/plusUtils";
 import { getSettings } from "@/settings/model";
 import { ChatMessage, ResponseMetadata, StreamingResult } from "@/types/message";
-import { err2String, withSuppressedTokenWarnings } from "@/utils";
+import { withSuppressedTokenWarnings } from "@/utils";
 import { AIMessage, BaseMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { Runnable } from "@langchain/core/runnables";
 import { StructuredTool } from "@langchain/core/tools";
@@ -67,20 +65,15 @@ import {
 } from "./utils/AgentReasoningState";
 import { getSystemPromptWithMemory } from "@/system-prompts/systemPromptBuilder";
 import { UserMemoryManager } from "@/memory/UserMemoryManager";
-import { ToolManager } from "@/tools/toolManager";
 import { ToolResultFormatter } from "@/tools/ToolResultFormatter";
 import { RetrieverFactory } from "@/search/RetrieverFactory";
 import { FilterRetriever } from "@/search/v3/FilterRetriever";
 import { mergeFilterAndSearchResults } from "@/search/v3/mergeResults";
 import { extractTagsFromQuery } from "@/search/v3/utils/tagUtils";
-import { getModelKey } from "@/aiParams";
-import { findCustomModel } from "@/utils";
 import {
   formatSourceCatalog,
   getQACitationInstructions,
   sanitizeContentForCitations,
-  addFallbackSources,
-  hasInlineCitations,
   type SourceCatalogEntry,
 } from "./utils/citationUtils";
 import { extractChatHistory } from "@/utils";
@@ -110,11 +103,6 @@ const AgentInputSchema = z.object({
     })
     .optional(),
 });
-
-/**
- * Zod schema for tool call arguments validation.
- */
-const ToolCallArgsSchema = z.record(z.string(), z.unknown());
 
 /**
  * Validate agent input using Zod.
@@ -648,7 +636,7 @@ export class AgentChainRunner extends BaseChainRunner {
     const chatHistory = extractChatHistory(memoryVariables);
 
     // Condense query with chat history
-    let standaloneQuestion = rawUserQuery;
+    const standaloneQuestion = rawUserQuery;
     if (chatHistory.length > 0) {
       logInfo("[VaultQA] Condensing query with chat history");
       // Note: getStandaloneQuestion would need to be imported
@@ -665,7 +653,6 @@ export class AgentChainRunner extends BaseChainRunner {
     const filterDocs = await filterRetriever.getRelevantDocuments(standaloneQuestion);
 
     // Create main retriever
-    const settings = getSettings();
     const retrieverResult = await RetrieverFactory.createRetriever(
       this.chainManager.app,
       {
@@ -788,9 +775,7 @@ export class AgentChainRunner extends BaseChainRunner {
       updateCurrentAiMessage,
       processLocalSearchResult,
       applyCiCOrderingToLocalSearchResult,
-      adapter,
       isVaultQAMode,
-      vaultQADocs,
     } = params;
 
     const settings = getSettings();

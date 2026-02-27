@@ -6,7 +6,7 @@ import {
   setChainType,
 } from "@/aiParams";
 import ChainFactory, { ChainType, Document } from "@/chainFactory";
-import { DEFAULT_MAX_SOURCE_CHUNKS, USER_SENDER } from "@/constants";
+import { USER_SENDER } from "@/constants";
 import {
   AutonomousAgentChainRunner,
   ChainRunner,
@@ -244,7 +244,6 @@ export default class ChainManager {
 
   private getChainRunner(): ChainRunner {
     const chainType = getChainType();
-    const settings = getSettings();
 
     switch (chainType) {
       case ChainType.LLM_CHAIN:

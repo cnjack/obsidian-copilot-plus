@@ -398,7 +398,6 @@ describe("zodToJsonSchemaString", () => {
       name: z.string(),
     });
 
-    const result2 = zodToJsonSchemaString(schema, 2);
     const result4 = zodToJsonSchemaString(schema, 4);
 
     expect(result4.split("\n")[1]?.startsWith("    ")).toBe(true);

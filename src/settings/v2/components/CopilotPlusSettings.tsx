@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { SettingItem } from "@/components/ui/setting-item";
 import { updateSetting, useSettingsValue } from "@/settings/model";
-import { MCPInitResult, MCPManager, MCPServerStatus } from "@/tools/MCPManager";
+import { MCPInitResult, MCPManager } from "@/tools/MCPManager";
 import { Loader2 } from "lucide-react";
 import React, { useState } from "react";
 import { ToolSettingsSection } from "./ToolSettingsSection";
@@ -51,7 +51,7 @@ export const CopilotPlusSettings: React.FC = () => {
               Format: <code className="tw-text-accent">{'{"server-name": {"command": "npx", "args": ["-y", "package-name"], "env": {}}}'}</code>
             </div>
             <textarea
-              className="tw-w-full tw-resize-y tw-rounded tw-border tw-border-solid tw-border-border tw-bg-background tw-p-2 tw-font-mono tw-text-xs tw-text-normal"
+              className="tw-w-full tw-resize-y tw-rounded tw-border tw-border-solid tw-border-border tw-bg-primary tw-p-2 tw-font-mono tw-text-xs tw-text-normal"
               rows={8}
               placeholder={`{\n  "my-server": {\n    "command": "npx",\n    "args": ["-y", "mcp-server-package"],\n    "env": {\n      "API_KEY": "your-key"\n    }\n  },\n  "my-remote": {\n    "url": "https://example.com/mcp",\n    "headers": {\n      "Authorization": "Bearer your-token"\n    }\n  }\n}`}
               value={settings.mcpServersConfig}

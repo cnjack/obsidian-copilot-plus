@@ -5,7 +5,6 @@
 import {
   ContextItem,
   NoteRefContextItem,
-  VaultSearchResultContextItem,
   UrlRefContextItem,
 } from "./ContextItem";
 import {
@@ -13,12 +12,8 @@ import {
   createVaultSearchResultContextItem,
   createUrlRefContextItem,
   createYouTubeTranscriptContextItem,
-  createWebTabContextItem,
   createSelectedTextNoteContextItem,
-  createSelectedTextWebContextItem,
   createTagRefContextItem,
-  createFolderRefContextItem,
-  createCustomContentContextItem,
   createNoteRefsFromPaths,
   createSearchResultsFromDocs,
 } from "./ContextItemFactory";
@@ -27,12 +22,6 @@ import {
   isVaultSearchResultContextItem,
   isUrlRefContextItem,
   isYouTubeTranscriptContextItem,
-  isWebTabContextItem,
-  isSelectedTextNoteContextItem,
-  isSelectedTextWebContextItem,
-  isTagRefContextItem,
-  isFolderRefContextItem,
-  isCustomContentContextItem,
   hasContextContent,
   isVaultSource,
   isWebSource,

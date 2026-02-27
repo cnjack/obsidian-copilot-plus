@@ -18,16 +18,6 @@ import {
   CustomContentContextItem,
 } from "./ContextItem";
 import {
-  isNoteRefContextItem,
-  isVaultSearchResultContextItem,
-  isUrlRefContextItem,
-  isYouTubeTranscriptContextItem,
-  isWebTabContextItem,
-  isSelectedTextNoteContextItem,
-  isSelectedTextWebContextItem,
-  isTagRefContextItem,
-  isFolderRefContextItem,
-  isCustomContentContextItem,
   getContextContent,
 } from "./ContextItemGuards";
 

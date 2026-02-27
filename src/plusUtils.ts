@@ -11,7 +11,7 @@ import {
 import { logError, logInfo } from "@/logger";
 import { getSettings, setSettings, updateSetting } from "@/settings/model";
 import { Notice } from "obsidian";
-import React from "react";
+
 
 export const DEFAULT_COPILOT_PLUS_CHAT_MODEL = ChatModels.COPILOT_PLUS_FLASH;
 export const DEFAULT_COPILOT_PLUS_CHAT_MODEL_KEY =

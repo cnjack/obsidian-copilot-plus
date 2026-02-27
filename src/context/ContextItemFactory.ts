@@ -6,7 +6,6 @@
  */
 
 import {
-  ContextItem,
   ContextSourceType,
   NoteRefContextItem,
   VaultSearchResultContextItem,

@@ -56,8 +56,8 @@ export function zodToJsonSchema(schema: z.ZodType): JSONSchema {
     try {
       const result = (schema as any).toJSONSchema();
       // Remove the $schema property as it's not needed for LLM tool definitions
-      const { $schema, ...rest } = result;
-      return rest as JSONSchema;
+      delete result.$schema;
+      return result as JSONSchema;
     } catch {
       // Fall through to manual conversion if toJSONSchema fails
     }

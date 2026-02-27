@@ -70,7 +70,7 @@ function DiffPreviewContent({
   return (
     <div className="tw-flex tw-flex-col tw-gap-4">
       {/* Diff view container */}
-      <div className="tw-max-h-96 tw-overflow-auto tw-rounded-md tw-border tw-bg-base-05 tw-font-mono tw-text-sm">
+      <div className="tw-bg-base-05 tw-max-h-96 tw-overflow-auto tw-rounded-md tw-border tw-font-mono tw-text-sm">
         {diffLines.length === 0 ? (
           <div className="tw-p-4 tw-text-muted">No content to display</div>
         ) : (

@@ -7,7 +7,7 @@ import { DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-
 import { SettingSwitch } from "@/components/ui/setting-switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { logError } from "@/logger";
-import { useIsPlusUser } from "@/plusUtils";
+
 import { updateSetting, useSettingsValue } from "@/settings/model";
 import { Docs4LLMParser } from "@/tools/FileParserManager";
 import { isRateLimitError } from "@/utils/rateLimitUtils";
@@ -195,7 +195,7 @@ export function ChatControls({
 }: ChatControlsProps) {
   const settings = useSettingsValue();
   const [selectedChain] = useChainType();
-  const isPlusUser = useIsPlusUser();
+
 
   return (
     <div className="tw-flex tw-w-full tw-items-center tw-justify-between tw-p-1">
