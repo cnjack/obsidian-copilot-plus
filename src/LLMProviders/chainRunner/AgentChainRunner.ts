@@ -13,7 +13,6 @@
  */
 
 import {
-  AGENT_LOOP_TIMEOUT_MS,
   DEFAULT_MAX_SOURCE_CHUNKS,
   ModelCapability,
   RETRIEVED_DOCUMENT_TAG,
@@ -110,6 +109,56 @@ const AgentInputSchema = z.object({
  */
 function validateAgentInput(input: unknown): z.infer<typeof AgentInputSchema> {
   return AgentInputSchema.parse(input);
+}
+
+/**
+ * Normalize unknown errors to a searchable string.
+ */
+function getErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "string") {
+    return error;
+  }
+  return JSON.stringify(error);
+}
+
+/**
+ * Detect whether an error is an HTTP 400 style failure.
+ */
+function isHttp400Error(error: unknown): boolean {
+  const text = getErrorText(error);
+  const errorLike = error as
+    | {
+        status?: number;
+        statusCode?: number;
+        response?: { status?: number };
+      }
+    | undefined;
+
+  return (
+    errorLike?.status === 400 ||
+    errorLike?.statusCode === 400 ||
+    errorLike?.response?.status === 400 ||
+    /\bhttp\s*400\b|\bstatus\s*400\b|\b400\s*bad\s*request\b/i.test(text)
+  );
+}
+
+/**
+ * Detect whether an error likely indicates token/context-size limits.
+ */
+function isTokenContextLimitError(error: unknown): boolean {
+  const message = getErrorText(error);
+
+  const hasTokenLimitSignal =
+    /(max\s*(input\s*)?tokens?|token\s*(limit|size|length)|context\s*length|maximum\s*context\s*length|prompt\s*(is\s*)?too\s*long|too\s*many\s*tokens)/i.test(
+      message
+    );
+
+  const has400AndTokenHint = isHttp400Error(error) && /token|context|prompt/i.test(message);
+
+  return hasTokenLimitSignal || has400AndTokenHint;
 }
 
 // ============================================================================
@@ -495,6 +544,28 @@ export class AgentChainRunner extends BaseChainRunner {
 
       logError("Agent failed with error:", error);
 
+      if (isTokenContextLimitError(error)) {
+        this.reasoningState.status = "complete";
+        const reasoningBlock = this.buildReasoningBlockMarkup();
+        const tokenLimitMessage = isHttp400Error(error)
+          ? "The request was rejected with HTTP 400, likely due to token/context limits. Please narrow the scope or start a new follow-up question."
+          : "The request likely exceeded the model token/context limits. Please narrow the scope or start a new follow-up question.";
+        const finalResponse = reasoningBlock
+          ? reasoningBlock + "\n\n" + tokenLimitMessage
+          : tokenLimitMessage;
+
+        updateCurrentAiMessage(finalResponse);
+        return this.handleResponse(
+          finalResponse,
+          userMessage,
+          abortController,
+          addMessage,
+          updateCurrentAiMessage,
+          undefined,
+          finalResponse
+        );
+      }
+
       // Stream error to user
       await this.handleError(
         error,
@@ -778,23 +849,12 @@ export class AgentChainRunner extends BaseChainRunner {
       isVaultQAMode,
     } = params;
 
-    const settings = getSettings();
-    const maxIterations = isVaultQAMode ? 1 : settings.autonomousAgentMaxIterations;
     const collectedSources: AgentSource[] = [];
-    const loopStartTime = Date.now();
 
     let iteration = 0;
     let responseMetadata: ResponseMetadata | undefined;
 
-    while (iteration < maxIterations) {
-      if (abortController.signal.aborted) break;
-
-      // Check for loop timeout
-      const elapsedTime = Date.now() - loopStartTime;
-      if (elapsedTime >= AGENT_LOOP_TIMEOUT_MS) {
-        logWarn(`Agent loop timed out after ${Math.round(elapsedTime / 1000)}s`);
-        break;
-      }
+    while (!abortController.signal.aborted) {
       iteration++;
 
       // Stream response
@@ -987,20 +1047,10 @@ export class AgentChainRunner extends BaseChainRunner {
       };
     }
 
-    // Max iterations or timeout reached
-    const elapsedTime = Date.now() - loopStartTime;
-    const timedOut = elapsedTime >= AGENT_LOOP_TIMEOUT_MS;
-
-    if (timedOut) {
-      logWarn(`Agent loop timed out after ${Math.round(elapsedTime / 1000)}s`);
-    } else {
-      logWarn(`Agent reached max iterations (${maxIterations})`);
-    }
-
-    const limitMessage = timedOut
-      ? "I've reached the time limit for reasoning. Here's what I found so far."
-      : "I've reached the maximum number of tool calls. Here's what I found so far.";
-    const finalResponse = reasoningBlock ? reasoningBlock + "\n\n" + limitMessage : limitMessage;
+    const interruptedMessage = "The response was interrupted.";
+    const finalResponse = reasoningBlock
+      ? reasoningBlock + "\n\n" + interruptedMessage
+      : interruptedMessage;
 
     return {
       finalResponse,

@@ -1,6 +1,5 @@
 import React from "react";
 import { SettingItem } from "@/components/ui/setting-item";
-import { AGENT_MAX_ITERATIONS_LIMIT } from "@/constants";
 import { updateSetting, useSettingsValue } from "@/settings/model";
 import { ToolRegistry } from "@/tools/ToolRegistry";
 
@@ -54,19 +53,6 @@ export const ToolSettingsSection: React.FC = () => {
 
   return (
     <>
-      <SettingItem
-        type="slider"
-        title="Max Iterations"
-        description="Maximum number of reasoning iterations the autonomous agent can perform. Higher values allow for more complex reasoning but may take longer."
-        value={settings.autonomousAgentMaxIterations ?? 4}
-        onChange={(value) => {
-          updateSetting("autonomousAgentMaxIterations", value);
-        }}
-        min={4}
-        max={AGENT_MAX_ITERATIONS_LIMIT}
-        step={1}
-      />
-
       <div className="tw-mt-4 tw-rounded-lg tw-bg-secondary tw-p-4">
         <div className="tw-mb-2 tw-text-sm tw-font-medium">Agent Accessible Tools</div>
         <div className="tw-mb-4 tw-text-xs tw-text-muted">
