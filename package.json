@@ -80,7 +80,7 @@
     "ts-jest": "^29.1.0",
     "tslib": "2.4.0",
     "typescript": "^5.7.2",
-    "uuid": "^13.0.0",
+    "uuid": "^14.0.0",
     "web-streams-polyfill": "^3.3.2"
   },
   "dependencies": {
